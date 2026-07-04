@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-select=none">
+    <title> Craft Print</title>
+    <link rel="stylesheet" href="style.css">
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.9.0/nipplejs.min.js"></script>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+    <div id="crosshair"></div>
+    
+    <div id="notificacao">Mensagem</div>
+    
+    <div id="barra-coleta-container">
+        <div id="barra-coleta-progresso"></div>
+    </div>
+
+    <div id="inventario-hud">
+        <div class="slot-item ativo" id="slot-machado" data-item="machado">🪓<span class="qtd">1</span></div>
+        <div class="slot-item" id="slot-madeira" data-item="madeira">🪵<span class="qtd" id="txt-qtd-madeira">0</span></div>
+        <div class="slot-item" id="slot-casa-p" data-item="planta_p" style="display:none;">📜🏡<span class="qtd">P</span></div>
+        <div class="slot-item" id="slot-casa-m" data-item="planta_m" style="display:none;">📜🏛️<span class="qtd">M</span></div>
+        <div class="slot-item" id="slot-casa-g" data-item="planta_g" style="display:none;">📜🏰<span class="qtd">G</span></div>
+    </div>
+
+    <div id="menu-crafting">
+        <h2>🛠️ Mesa de Trabalho</h2>
+        <p>Gaste suas madeiras para criar plantas de construção:</p>
+        <hr>
+        <div class="opcao-craft" id="craft-casa-p">
+            <span>🏡 Casa Pequena (20 Madeiras)</span>
+            <button onclick="craftarConstrucao('p', 20)">Criar Planta</button>
+        </div>
+        <div class="opcao-craft" id="craft-casa-m">
+            <span>🏛️ Casa Média (30 Madeiras)</span>
+            <button onclick="craftarConstrucao('m', 30)">Criar Planta</button>
+        </div>
+        <div class="opcao-craft" id="craft-casa-g">
+            <span>🏰 Casa Grande (45 Madeiras)</span>
+            <button onclick="craftarConstrucao('g', 45)">Criar Planta</button>
+        </div>
+        <br>
+        <button id="btn-fechar-crafting">Fechar [E]</button>
+    </div>
+    
+    <div id="aviso-orientacao">
+        <p>Por favor, vire o celular na <b>Horizontal</b> para jogar!</p>
+    </div>
+
+    <div id="instrucoes">
+        <h1>Craft Print</h1>
+        <p>PC: W,A,S,D para andar | Clique Segurado nas Árvores para cortar.</p>
+        <p>Numerais [1 a 5] para alternar itens | Teclas [R / T] para girar a planta.</p>
+        <p><b>Toque/Clique para Começar</b></p>
+    </div>
+    
+    <button id="btn-fullscreen">Fullscreen ⛶</button>
+
+    <div id="controles-mobile">
+        <div id="zona-joystick"></div>
+        <div id="zona-botoes">
+            <button id="btn-girar-planta" class="btn-mobile" style="display: none;">🔄</button>
+            <button id="btn-lanterna" class="btn-mobile">🔦</button>
+            <button id="btn-pulo" class="btn-mobile">🪂</button>
+            <button id="btn-interagir" class="btn-mobile">🔑</button>
+            <button id="btn-corrida" class="btn-mobile">🏃</button>
+        </div>
+    </div>
+
+    <div id="prompt-interacao">Pressione E para Interagir</div>
+
+    <script src="script.js"></script>
+</body>
+</html>
