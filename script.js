@@ -160,6 +160,27 @@ function atualizarUIAktiv() {
     }
 }
 
+// --- ADIÇÃO: CLIQUE/TOQUE NOS ITENS DO INVENTÁRIO ---
+document.querySelectorAll('.slot-item').forEach(slot => {
+    ['mousedown', 'touchstart'].forEach(tipoEvento => {
+        slot.addEventListener(tipoEvento, (e) => {
+            // e.stopPropagation() é crucial aqui para que o toque não passe para o cenário 
+            // e faça o personagem bater o machado ou construir algo sem querer.
+            e.stopPropagation(); 
+            
+            let novoItem = slot.getAttribute('data-item');
+            
+            // Só permite equipar plantas se você tiver pelo menos 1 no inventário
+            if (novoItem.startsWith('planta_') && inventario[novoItem] <= 0) {
+                return;
+            }
+            
+            itemAtivo = novoItem;
+            atualizarUIAktiv();
+        });
+    });
+});
+
 window.addEventListener('keydown', (e) => {
     if(e.code === 'Digit1') { itemAtivo = 'machado'; atualizarUIAktiv(); }
     if(e.code === 'Digit2') { itemAtivo = 'madeira'; atualizarUIAktiv(); }
