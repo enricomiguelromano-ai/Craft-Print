@@ -1,6 +1,6 @@
 // --- 🎵 CONFIGURAÇÃO DOS SEUS ARQUIVOS MP3 e IMAGENS 🎵 ---
 const ARQUIVOS_DE_AUDIO = {
-    musicaFundo: 'sounds/music.mp3', passoNormal: 'sounds/walk.mp3',
+    musicaFundo: 'music.mp3', passoNormal: 'sounds/walk.mp3',
     passoCorrer: 'sounds/run.mp3', passoAgua: 'sounds/walk_water.mp3',
     lanterna: 'sounds/click_lantern.mp3', portaAbrir: 'sounds/open_door.mp3',  
     portaFechar: 'sounds/close_door.mp3', pulo: 'sounds/jump.mp3'
@@ -8,18 +8,37 @@ const ARQUIVOS_DE_AUDIO = {
 const CAMINHO_QUADRO_IMAGEM = 'img/tumoritus.jpeg';
 
 // --- SISTEMA INVENTÁRIO E ESTADO ---
-let inventario = { madeira: 0, machado: 1, planta_p: 0, planta_m: 0, planta_g: 0 };
+
+let inventario = { 
+    madeira: 0, 
+    machado: 1, 
+    planta_p: 0, 
+    planta_m: 0, 
+    planta_g: 0, 
+    planta_fogueira: 0, 
+    picareta: 1,
+    pedra: 0, 
+    planta_piso: 0, 
+    planta_tocha: 0,
+    planta_cama: 0, // <-- ADICIONADO AQUI
+    ferro: 0,
+    cobre: 0,
+    ouro: 0
+};
+
 let itemAtivo = 'machado';
-let tempoSegurandoClique = 0, estaMinando = false, arvoreSendoCortada = null;
+
+let tempoSegurandoClique = 0, estaMinando = false, arvoreSendoCortada = null, rochaSendoMinerada = null;
 let modoConstrucaoAtivo = false, tipoCasaParaConstruir = null, hologramaVisual = null;
 let anguloRotacaoHolograma = 0; 
 
 // --- SISTEMA DE ESCADAS DA CASA ---
 let listaEscadas = [];
+let listaFogueirasDinamicas = [];
 
 // --- CONFIGURAÇÃO INICIAL DO ESPAÇO 3D ---
 const container = document.getElementById('canvas-container');
-const instrucoes = document.getElementById('instrucoes');
+
 const promptInteracao = document.getElementById('prompt-interacao');
 const btnFullscreen = document.getElementById('btn-fullscreen');
 const controlesMobileDiv = document.getElementById('controles-mobile');
@@ -111,12 +130,75 @@ function mostrarNotificacao(msg, cor = '#ef4444') {
 }
 
 // --- CONTROLES E INPUTS ---
+// --- CONTROLES E INPUTS ---
 const controles = new THREE.PointerLockControls(cameraContainer, document.body);
-instrucoes.addEventListener('click', () => { if(!ehTouch) controles.lock(); else { instrucoes.style.display = 'none'; carregarTodosOsAudios(); } });
-controles.addEventListener('lock', () => { instrucoes.style.display = 'none'; carregarTodosOsAudios(); });
-controles.addEventListener('unlock', () => { if(!ehTouch && menuCrafting.style.display !== 'block') { instrucoes.style.display = 'block'; promptInteracao.style.display = 'none'; pararSonsDeMovimento(); } });
-cena.add(controles.getObject());
 
+// --- ELEMENTOS DA UI ---
+const telaStart = document.getElementById('tela-start');
+const menuPause = document.getElementById('menu-pause');
+const modalControles = document.getElementById('modal-controles');
+
+const btnIniciarJogo = document.getElementById('btn-iniciar-jogo');
+const btnRetomar = document.getElementById('btn-retomar');
+const btnReiniciar = document.getElementById('btn-reiniciar');
+
+// Botões para o modal de Controles/Instruções
+const btnAbrirControlesStart = document.getElementById('btn-abrir-controles-start');
+const btnAbrirControlesPause = document.getElementById('btn-controles-pause');
+const btnFecharControles = document.getElementById('btn-fechar-controles');
+
+let jogoIniciado = false;
+
+// 1. Abrir Modal de Controles
+btnAbrirControlesStart?.addEventListener('click', () => {
+    if (modalControles) modalControles.style.display = 'flex';
+});
+
+btnAbrirControlesPause?.addEventListener('click', () => {
+    if (modalControles) modalControles.style.display = 'flex';
+});
+
+// 2. Fechar Modal de Controles
+btnFecharControles?.addEventListener('click', () => {
+    if (modalControles) modalControles.style.display = 'none';
+});
+
+// 3. Clique no botão JOGAR NOW
+btnIniciarJogo?.addEventListener('click', () => {
+    if (telaStart) telaStart.style.display = 'none';
+    if (modalControles) modalControles.style.display = 'none';
+    jogoIniciado = true;
+    try { carregarTodosOsAudios(); } catch (e) {}
+    if (!ehTouch && controles) controles.lock();
+});
+
+// 4. Quando trava o mouse (Pointer Lock)
+controles.addEventListener('lock', () => {
+    if (menuPause) menuPause.style.display = 'none';
+    if (modalControles) modalControles.style.display = 'none';
+});
+
+// 5. Quando você aperta ESC (destrava o mouse)
+controles.addEventListener('unlock', () => {
+    if (jogoIniciado && !menuCraftingAberto && !mochilaAberta) {
+        if (menuPause) menuPause.style.display = 'flex';
+        if (promptInteracao) promptInteracao.style.display = 'none';
+        pararSonsDeMovimento();
+    }
+});
+
+// 6. Botões do Menu de Pause
+btnRetomar?.addEventListener('click', () => {
+    if (menuPause) menuPause.style.display = 'none';
+    if (modalControles) modalControles.style.display = 'none';
+    if (!ehTouch && controles) controles.lock();
+});
+
+btnReiniciar?.addEventListener('click', () => {
+    window.location.reload();
+});
+
+cena.add(controles.getObject());
 let toqueIniciado = false, anteriorToqueX = 0, anteriorToqueY = 0;
 window.addEventListener('touchstart', (e) => { 
     const joystickZone = document.getElementById('zona-joystick');
@@ -137,29 +219,109 @@ function atualizarUIAktiv() {
     const slotP = document.getElementById('slot-casa-p');
     const slotM = document.getElementById('slot-casa-m');
     const slotG = document.getElementById('slot-casa-g');
+    const slotFogueira = document.getElementById('slot-fogueira');
+    const slotPiso = document.getElementById('slot-piso'); 
+    const slotTocha = document.getElementById('slot-tocha'); 
+    const slotCama = document.getElementById('slot-cama');
     
     if(slotP) slotP.style.display = inventario.planta_p > 0 ? 'flex' : 'none';
     if(slotM) slotM.style.display = inventario.planta_m > 0 ? 'flex' : 'none';
     if(slotG) slotG.style.display = inventario.planta_g > 0 ? 'flex' : 'none';
-    
+    if(slotFogueira) slotFogueira.style.display = inventario.planta_fogueira > 0 ? 'flex' : 'none';
+
+    // Atualiza o display e a quantidade da cama
+    if(slotCama) {
+        slotCama.style.display = inventario.planta_cama > 0 ? 'flex' : 'none';
+        let spanQtd = slotCama.querySelector('.qtd');
+        if (spanQtd) spanQtd.innerText = inventario.planta_cama;
+    }
+
+    if(slotPiso) {
+        slotPiso.style.display = inventario.planta_piso > 0 ? 'flex' : 'none';
+        let spanQtd = slotPiso.querySelector('.qtd');
+        if (spanQtd) spanQtd.innerText = inventario.planta_piso;
+    }
+
+    if(slotTocha) {
+        slotTocha.style.display = inventario.planta_tocha > 0 ? 'flex' : 'none';
+        let spanQtd = slotTocha.querySelector('.qtd');
+        if (spanQtd) spanQtd.innerText = inventario.planta_tocha;
+    }
+
     document.querySelectorAll('.slot-item').forEach(el => el.classList.remove('ativo'));
     if (itemAtivo.startsWith('planta_') && inventario[itemAtivo] <= 0) itemAtivo = 'machado';
 
+    // Apenas ferramentas e plantas ficam ativas na Hotbar agora!
     if(itemAtivo === 'machado') document.getElementById('slot-machado')?.classList.add('ativo');
-    if(itemAtivo === 'madeira') document.getElementById('slot-madeira')?.classList.add('ativo');
+    if(itemAtivo === 'picareta') document.getElementById('slot-picareta')?.classList.add('ativo');
+
     if(itemAtivo === 'planta_p' && slotP) slotP.classList.add('ativo');
     if(itemAtivo === 'planta_m' && slotM) slotM.classList.add('ativo');
     if(itemAtivo === 'planta_g' && slotG) slotG.classList.add('ativo');
+    if(itemAtivo === 'planta_fogueira' && slotFogueira) slotFogueira.classList.add('ativo');
+    if(itemAtivo === 'planta_piso' && slotPiso) slotPiso.classList.add('ativo');
+    if(itemAtivo === 'planta_tocha' && slotTocha) slotTocha.classList.add('ativo');
+    if(itemAtivo === 'planta_cama' && slotCama) slotCama.classList.add('ativo'); // <-- ADICIONADO AQUI!
 
     if(itemAtivo.startsWith('planta_') && inventario[itemAtivo] > 0) { 
-        modoConstrucaoAtivo = true; tipoCasaParaConstruir = itemAtivo.split('_')[1]; ativarHolograma(tipoCasaParaConstruir); 
-        if (btnGirarPlantaMobile) btnGirarPlantaMobile.style.display = 'block';
+        modoConstrucaoAtivo = true; 
+        tipoCasaParaConstruir = itemAtivo.replace('planta_', ''); 
+        ativarHolograma(tipoCasaParaConstruir); 
+        if (typeof btnGirarPlantaMobile !== 'undefined' && btnGirarPlantaMobile) btnGirarPlantaMobile.style.display = 'block';
     } else { 
         modoConstrucaoAtivo = false; desativarHolograma(); 
-        if (btnGirarPlantaMobile) btnGirarPlantaMobile.style.display = 'none';
+        if (typeof btnGirarPlantaMobile !== 'undefined' && btnGirarPlantaMobile) btnGirarPlantaMobile.style.display = 'none';
     }
 }
 
+function atualizarHolograma() {
+    if (!modoConstrucaoAtivo || !hologramaVisual) return;
+
+    const vetorDirecao = new THREE.Vector3();
+    camera.getWorldDirection(vetorDirecao);
+
+    // Cria o raio a partir da posição da câmera com alcance de até 15 unidades
+    const raioConstrucao = new THREE.Raycaster(camera.position, vetorDirecao, 0, 15);
+    
+    // O raio checa colisões com o chão E com as casas/pisos que já foram construídos
+    const interseccoes = raioConstrucao.intersectObjects(objetosRaycast, true);
+
+    let pontoColisao = null;
+
+    // ✨ A MÁGICA ACONTECE AQUI:
+    // Vasculha o que o raio bateu para achar uma superfície plana virada para CIMA
+    for (let i = 0; i < interseccoes.length; i++) {
+        let face = interseccoes[i].face;
+        
+        // A 'normal.y' indica a direção da face geométrica. 
+        // y > 0.5 significa que a superfície aponta para cima (chão ou teto da casa visto de cima).
+        // Isso impede que os objetos grudem tortos nas paredes ou fiquem de cabeça para baixo no teto.
+        if (face && face.normal.y > 0.5) {
+            pontoColisao = interseccoes[i].point;
+            break;
+        } else if (!face && interseccoes[i].object.name === 'chao') {
+            // Garantia de segurança caso o chão original não devolva face matemática
+            pontoColisao = interseccoes[i].point;
+            break;
+        }
+    }
+
+    if (pontoColisao) {
+        // Mantém pisos, tochas e camas alinhados perfeitamente em uma grade (grid de 2 em 2)
+        let grid = (tipoCasaParaConstruir === 'piso' || tipoCasaParaConstruir === 'tocha' || tipoCasaParaConstruir === 'cama') ? 2 : 1;
+        
+        let xAlvo = Math.round(pontoColisao.x / grid) * grid;
+        let zAlvo = Math.round(pontoColisao.z / grid) * grid;
+        let yAlvo = pontoColisao.y; // Pega a altura exata do piso ou da laje
+
+        hologramaVisual.position.set(xAlvo, yAlvo, zAlvo);
+        hologramaVisual.rotation.y = anguloRotacaoHolograma;
+        hologramaVisual.visible = true;
+    } else {
+        // Se não estiver mirando num chão/laje, esconde o holograma
+        hologramaVisual.visible = false;
+    }
+}
 // --- ADIÇÃO: CLIQUE/TOQUE NOS ITENS DO INVENTÁRIO ---
 document.querySelectorAll('.slot-item').forEach(slot => {
     ['mousedown', 'touchstart'].forEach(tipoEvento => {
@@ -182,12 +344,23 @@ document.querySelectorAll('.slot-item').forEach(slot => {
 });
 
 window.addEventListener('keydown', (e) => {
+    // Abrir/Fechar Mochila
+    if(e.code === 'KeyI' || e.code === 'Tab') {
+        e.preventDefault(); // Evita que o Tab mude o foco do navegador
+        alternarMochila();
+        return;
+    }
+
     if(e.code === 'Digit1') { itemAtivo = 'machado'; atualizarUIAktiv(); }
-    if(e.code === 'Digit2') { itemAtivo = 'madeira'; atualizarUIAktiv(); }
+    if(e.code === 'Digit2') { itemAtivo = 'picareta'; atualizarUIAktiv(); }
     if(e.code === 'Digit3' && inventario.planta_p > 0) { itemAtivo = 'planta_p'; atualizarUIAktiv(); }
     if(e.code === 'Digit4' && inventario.planta_m > 0) { itemAtivo = 'planta_m'; atualizarUIAktiv(); }
     if(e.code === 'Digit5' && inventario.planta_g > 0) { itemAtivo = 'planta_g'; atualizarUIAktiv(); }
-    
+    if(e.code === 'Digit6' && inventario.planta_fogueira > 0) { itemAtivo = 'planta_fogueira'; atualizarUIAktiv(); }
+    if(e.code === 'Digit7' && inventario.planta_piso > 0) { itemAtivo = 'planta_piso'; atualizarUIAktiv(); }
+    if(e.code === 'Digit8' && inventario.planta_tocha > 0) { itemAtivo = 'planta_tocha'; atualizarUIAktiv(); }
+    if(e.code === 'Digit9' && inventario.planta_cama > 0) { itemAtivo = 'planta_cama'; atualizarUIAktiv(); }
+
     if(modoConstrucaoAtivo && hologramaVisual) {
         if(e.code === 'KeyR') { anguloRotacaoHolograma += Math.PI / 2; } 
         if(e.code === 'KeyT') { anguloRotacaoHolograma -= Math.PI / 2; } 
@@ -195,19 +368,31 @@ window.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('mousedown', (e) => {
-    if (menuCraftingAberto || instrucoes.style.display !== 'none') return;
+    // 1. Trocamos o 'instrucoes' por '!jogoIniciado'
+    if (menuCraftingAberto || !jogoIniciado) return;
     if (modoConstrucaoAtivo) { executarConstrucaoReal(); } 
-    else if (itemAtivo === 'machado' && e.button === 0) { estaMinando = true; tempoSegurandoClique = 0; }
+    // 2. Adicionamos parênteses em volta das ferramentas para evitar conflito de lógica
+    else if ((itemAtivo === 'machado' || itemAtivo === 'picareta') && e.button === 0) { 
+        estaMinando = true; tempoSegurandoClique = 0; 
+    }
 });
-window.addEventListener('mouseup', (e) => { if (e.button === 0) { estaMinando = false; tempoSegurandoClique = 0; if (barraProgressoContainer) barraProgressoContainer.style.display = 'none'; } });
+window.addEventListener('mouseup', (e) => { 
+    if (e.button === 0) { 
+        estaMinando = false; tempoSegurandoClique = 0; 
+        if (barraProgressoContainer) barraProgressoContainer.style.display = 'none'; 
+    } 
+});
 
 window.addEventListener('touchstart', (e) => {
-    if (menuCraftingAberto || instrucoes.style.display !== 'none') return;
+    // 3. Trocamos o 'instrucoes' por '!jogoIniciado' no mobile também
+    if (menuCraftingAberto || !jogoIniciado) return;
     const joystickZone = document.getElementById('zona-joystick');
     if (e.target.tagName === 'BUTTON' || (joystickZone && joystickZone.contains(e.target))) return;
-    if (modoConstrucaoAtivo) { executarConstrucaoReal(); } else if (itemAtivo === 'machado') { estaMinando = true; tempoSegurandoClique = 0; }
+    
+    if (itemAtivo === 'machado' || itemAtivo === 'picareta') { 
+        estaMinando = true; tempoSegurandoClique = 0; 
+    }
 }, {passive: true});
-window.addEventListener('touchend', () => { estaMinando = false; tempoSegurandoClique = 0; if (barraProgressoContainer) barraProgressoContainer.style.display = 'none'; });
 
 const noKeyDown = (evento) => {
     if(menuCraftingAberto && evento.code !== 'KeyE') return;
@@ -268,24 +453,45 @@ function processarInteracaoGeral() {
         }
     }
 }
-window.craftarConstrucao = function(tipo, custo) {
-    if(inventario.madeira >= custo) {
-        inventario.madeira -= custo; 
+window.craftarConstrucao = function(tipo, custoMadeira, custoPedra = 0) {
+    if(inventario.madeira >= custoMadeira && inventario.pedra >= custoPedra) {
+        inventario.madeira -= custoMadeira; 
+        inventario.pedra -= custoPedra;
+        
         const txtMadeira = document.getElementById('txt-qtd-madeira');
         if(txtMadeira) txtMadeira.innerText = inventario.madeira;
+        
+        const txtPedra = document.getElementById('txt-qtd-pedra');
+        if(txtPedra) txtPedra.innerText = inventario.pedra;
+
         if(tipo === 'p') inventario.planta_p++;
         if(tipo === 'm') inventario.planta_m++;
         if(tipo === 'g') inventario.planta_g++;
+        if(tipo === 'fogueira') inventario.planta_fogueira++;
+        if(tipo === 'piso') inventario.planta_piso += 10;
+        if(tipo === 'tocha') inventario.planta_tocha++;
+        if(tipo === 'cama') inventario.planta_cama++; // ✨ CORREÇÃO: Faltava esta linha para você receber a cama!
+        
         atualizarUIAktiv();
-        mostrarNotificacao("Planta criada! Equipe apertando as teclas de 1 a 5.", "#22c55e");
-        window.processarInteracaoGeral();
-    } else mostrarNotificacao("Madeiras insuficientes!", "#ef4444");
+        mostrarNotificacao("Planta criada! Equipe no inventário.", "#22c55e");
+        processarInteracaoGeral();
+    } else {
+        mostrarNotificacao("Recursos insuficientes!", "#ef4444");
+    }
 };
 document.getElementById('btn-fechar-crafting')?.addEventListener('click', () => processarInteracaoGeral());
 
 document.getElementById('btn-lanterna')?.addEventListener('touchstart', (e) => { e.preventDefault(); alternarLanterna(); });
 document.getElementById('btn-pulo')?.addEventListener('touchstart', (e) => { e.preventDefault(); executarPulo(); });
-document.getElementById('btn-interagir')?.addEventListener('touchstart', (e) => { e.preventDefault(); processarInteracaoGeral(); });
+document.getElementById('btn-interagir')?.addEventListener('touchstart', (e) => { 
+    e.preventDefault(); 
+    // Se estiver com a planta na mão, o botão constrói a casa. Se não, ele interage normalmente com portas/escadas.
+    if (modoConstrucaoAtivo) {
+        executarConstrucaoReal();
+    } else {
+        processarInteracaoGeral(); 
+    }
+});
 btnGirarPlantaMobile?.addEventListener('touchstart', (e) => { e.preventDefault(); if(modoConstrucaoAtivo) anguloRotacaoHolograma += Math.PI / 2; });
 
 const bCorrida = document.getElementById('btn-corrida');
@@ -407,7 +613,11 @@ function criarArvoreDiferenciada(x, z) {
 function criarRocha(x, z) {
     if (Math.abs(x - ponteX) < 6 && Math.abs(z - ponteZ) < 52) return; if (Math.abs(x - cabanaX) < 7 && Math.abs(z - cabanaZ) < 7) return;
     const s = Math.random() * 2 + 1.5, r = new THREE.Mesh(new THREE.DodecahedronGeometry(s, 1), new THREE.MeshStandardMaterial({ color: 0x6e6e6e, roughness: 0.9 }));
-    const h = obterAlturaTerreno(x, z); r.position.set(x, h + (s*0.3), z); r.castShadow = true; cena.add(r); objetosMundo.push({ x: x, z: z, raio: s*1.2, topoY: h + (s*1.1), meshRaiz: r }); objetosRaycast.push(r);
+    const h = obterAlturaTerreno(x, z); r.position.set(x, h + (s*0.3), z); r.castShadow = true; cena.add(r); 
+    
+    const objDados = { x: x, z: z, raio: s*1.2, topoY: h + (s*1.1), meshRaiz: r, eRocha: true, pedrasDisponiveis: 2 };
+    r.userData = { dadosRocha: objDados }; 
+    objetosMundo.push(objDados); objetosRaycast.push(r);
 }
 for (let i = 0; i < 140; i++) { let x = (Math.random() - 0.5) * 340, z = (Math.random() - 0.5) * 340; if (Math.abs(x) > 12 || Math.abs(z) > 12) { if (Math.random() > 0.35) criarArvoreDiferenciada(x, z); else criarRocha(x, z); } }
 
@@ -432,7 +642,11 @@ function criarEscadaDeParede(grupoPai, x, y, z, altura) {
 function ativarHolograma(tipo) {
     if(hologramaVisual) cena.remove(hologramaVisual);
     hologramaVisual = new THREE.Group();
-    let largura = (tipo === 'g') ? 14 : 7, profundidade = 6, altura = (tipo === 'p') ? 4 : 8;
+    
+    // Definimos as medidas da cama aqui (largura, profundidade e altura)
+    let largura = (tipo === 'fogueira' || tipo === 'piso') ? 2 : ((tipo === 'tocha') ? 0.4 : ((tipo === 'cama') ? 1.4 : ((tipo === 'g') ? 14 : 7)));
+    let profundidade = (tipo === 'fogueira' || tipo === 'piso') ? 2 : ((tipo === 'tocha') ? 0.4 : ((tipo === 'cama') ? 2.2 : 6));
+    let altura = (tipo === 'fogueira') ? 1 : ((tipo === 'piso') ? 0.1 : ((tipo === 'tocha') ? 1.5 : ((tipo === 'cama') ? 0.6 : ((tipo === 'p') ? 4 : 8))));
     
     let malhaPrevia = new THREE.Mesh(
         new THREE.BoxGeometry(largura, altura, profundidade), 
@@ -441,12 +655,15 @@ function ativarHolograma(tipo) {
     malhaPrevia.position.y = altura / 2;
     hologramaVisual.add(malhaPrevia);
     
-    let indicadorPorta = new THREE.Mesh(
-        new THREE.BoxGeometry(1.6, 2.8, 0.4),
-        new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.7 })
-    );
-    indicadorPorta.position.set(0, 1.4, profundidade / 2); 
-    hologramaVisual.add(indicadorPorta);
+    // Adicionamos o "tipo !== 'cama'" para que a cama não ganhe o indicador amarelo de porta
+    if (tipo !== 'fogueira' && tipo !== 'piso' && tipo !== 'tocha' && tipo !== 'cama') {
+        let indicadorPorta = new THREE.Mesh(
+            new THREE.BoxGeometry(1.6, 2.8, 0.4),
+            new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.7 })
+        );
+        indicadorPorta.position.set(0, 1.4, profundidade / 2); 
+        hologramaVisual.add(indicadorPorta);
+    }
 
     anguloRotacaoHolograma = 0;
     hologramaVisual.visible = false; 
@@ -483,8 +700,11 @@ function construirCasaDetalhada(tipo, posX, posY, posZ, rotacaoY) {
     if (tipo === 'g') {
         const piso1 = new THREE.Mesh(new THREE.BoxGeometry(w, 0.4, d), matPisoGlobal);
         piso1.position.y = 0.2; piso1.receiveShadow = true; casa.add(piso1);
+        objetosRaycast.push(piso1); // ✨ CORREÇÃO: Registra o chão de baixo da casa grande
+
         const piso2Completo = new THREE.Mesh(new THREE.BoxGeometry(w, 0.4, d), matPisoGlobal);
         piso2Completo.position.y = 4.2; piso2Completo.receiveShadow = true; casa.add(piso2Completo);
+        objetosRaycast.push(piso2Completo); // ✨ CORREÇÃO: Registra o andar de cima da casa grande
 
         // Janelas andar de baixo (restauradas)
         adicionarParedeComJanela(5, 4, eGrossa, -4.5, 2, 2.85, 0, 2.5, 1.8);
@@ -533,7 +753,7 @@ function construirCasaDetalhada(tipo, posX, posY, posZ, rotacaoY) {
                 let px = pos.getX(i);
                 if (px > 0) pos.setX(i, px - 3.5);
                 if (px < 0) pos.setX(i, px + 3.5);
-                pos.setZ(i, 0);
+                if (pos.getZ(i) !== undefined) pos.setZ(i, 0);
             }
         }
         geoTelhado.computeVertexNormals();
@@ -545,6 +765,7 @@ function construirCasaDetalhada(tipo, posX, posY, posZ, rotacaoY) {
         for(let a=0; a<andares; a++) {
             const piso = new THREE.Mesh(new THREE.BoxGeometry(w, 0.4, d), matPisoGlobal);
             piso.position.y = (a * 4) + 0.2; piso.receiveShadow = true; casa.add(piso);
+            objetosRaycast.push(piso); // ✨ CORREÇÃO: Registra automaticamente os pisos de baixo/cima das casas P e M
         }
         for(let a=0; a<andares; a++) {
             let yCentroMuro = (a * 4) + 2;
@@ -575,7 +796,7 @@ function construirCasaDetalhada(tipo, posX, posY, posZ, rotacaoY) {
         telhado.position.y = hTotalMuros + 1.25; telhado.rotation.y = Math.PI / 4; telhado.castShadow = true; casa.add(telhado);
     }
 
-    casa.rotation.y = rotacaoY;
+   casa.rotation.y = rotacaoY;
     casa.position.set(posX, posY, posZ);
     cena.add(casa);
     objetosRaycast.push(casa);
@@ -591,35 +812,221 @@ function construirCasaDetalhada(tipo, posX, posY, posZ, rotacaoY) {
     });
 }
 
+function construirFogueiraFisica(posX, posY, posZ) {
+    const fogueiraGrupo = new THREE.Group();
+
+    // Pedras em círculo (Visual da fogueira)
+    for(let a=0; a<Math.PI*2; a+=Math.PI/4) {
+        const p = new THREE.Mesh(
+            new THREE.DodecahedronGeometry(0.25, 0),
+            new THREE.MeshStandardMaterial({ color: 0x555555 })
+        );
+        p.position.set(Math.cos(a)*0.6, 0.1, Math.sin(a)*0.6);
+        p.castShadow = true;
+        fogueiraGrupo.add(p);
+    }
+
+    // O CONE LARANJA FOI REMOVIDO DAQUI ❌
+    // Agora o fogo será feito puramente pelas partículas de luz subindo!
+
+    fogueiraGrupo.position.set(posX, posY, posZ);
+    cena.add(fogueiraGrupo);
+    objetosRaycast.push(fogueiraGrupo);
+
+    // --- SISTEMA DE LUZ DINÂMICA NO CHÃO ---
+    const luzFogo = new THREE.PointLight(0xff7700, 2.0, 10);
+    luzFogo.position.set(posX, posY + 0.5, posZ);
+    cena.add(luzFogo);
+
+    // --- SISTEMA DE PARTÍCULAS (O FOGO QUE SOBE IGUAL À CABANA) ---
+    const countPart = 30; 
+    const geoPart = new THREE.BufferGeometry();
+    const posPart = new Float32Array(countPart * 3);
+    const dadosPart = [];
+
+    for (let i = 0; i < countPart; i++) {
+        // Começa bem no centro das pedras
+        posPart[i * 3] = posX + (Math.random() - 0.5) * 0.2;
+        posPart[i * 3 + 1] = posY + 0.1 + Math.random() * 2;
+        posPart[i * 3 + 2] = posZ + (Math.random() - 0.5) * 0.2;
+
+        dadosPart.push({
+            vY: Math.random() * 1.5 + 1.0, // Velocidade de subida
+            vX: (Math.random() - 0.5) * 0.2,
+            vZ: (Math.random() - 0.5) * 0.2
+        });
+    }
+
+    geoPart.setAttribute('position', new THREE.BufferAttribute(posPart, 3));
+    
+    // Material idêntico ao da cabana (laranja brilhante que sobe se misturando)
+    const sistemaFumaca = new THREE.Points(geoPart, new THREE.PointsMaterial({
+        color: 0xff4500,               // Cor do fogo vivo
+        size: 0.25,                    // Tamanho ideal das faíscas
+        transparent: true,
+        opacity: 0.8,
+        blending: THREE.AdditiveBlending // Faz os pontos brilharem intensamente ao se sobreporem
+    }));
+    cena.add(sistemaFumaca);
+
+    // Salva na lista global para rodar a física na função animar()
+    listaFogueirasDinamicas.push({
+        luz: luzFogo,
+        sistemaParticulas: sistemaFumaca,
+        dadosParticulas: dadosPart,
+        xOriginal: posX,
+        yOriginal: posY,
+        zOriginal: posZ
+    });
+}
+
+function construirPisoPedra(posX, posY, posZ, rotacaoY) {
+    // Usamos uma cor e textura simples simulando paralelepípedos
+    const matPisoPedra = new THREE.MeshStandardMaterial({ 
+        color: 0x7a7a7a, 
+        roughness: 1.0 
+    });
+    
+    // Uma caixa achatada (0.05 de altura) para dar o efeito de tinta / caminho plano
+    const piso = new THREE.Mesh(new THREE.BoxGeometry(2, 0.05, 2), matPisoPedra);
+    
+    piso.rotation.y = rotacaoY;
+    // O pulo do gato: +0.05 na posição Y evita que ele "pisque" e brigue com a textura da grama (Z-fighting)
+    piso.position.set(posX, posY + 0.05, posZ); 
+    piso.receiveShadow = true;
+    
+    cena.add(piso);
+    // Adicionar no array de raycast garante que possamos interagir (ou impedir construir por cima)
+    objetosRaycast.push(piso);
+}
+
+function construirTochaFisica(posX, posY, posZ) {
+    const grupoTocha = new THREE.Group();
+
+    // 1. O Bastão de Madeira (Fino e vertical)
+    const matMadeira = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+    const bastao = new THREE.Mesh(new THREE.BoxGeometry(0.15, 1.2, 0.15), matMadeira);
+    bastao.position.y = 0.6;
+    grupoTocha.add(bastao);
+
+    // 2. O Suporte de Pedra (No topo do bastão)
+    const matPedra = new THREE.MeshStandardMaterial({ color: 0x5a5a5a, roughness: 0.8 });
+    const suporte = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.2, 0.25), matPedra);
+    suporte.position.y = 1.2;
+    grupoTocha.add(suporte);
+
+    // 3. O Carvão/Fogo (Cubo laranja brilhante no topo)
+    const matFogo = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
+    const fogo = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.2, 0.18), matFogo);
+    fogo.position.y = 1.35;
+    grupoTocha.add(fogo);
+
+    // 4. A Luz Real da Tocha (Luz amarelada que ilumina o mundo)
+    const luzTocha = new THREE.PointLight(0xff9900, 1.5, 12); 
+    luzTocha.position.y = 1.5;
+    luzTocha.castShadow = true;
+    luzTocha.shadow.bias = -0.002;
+    grupoTocha.add(luzTocha);
+
+    // Posiciona o conjunto inteiro no mapa
+    grupoTocha.position.set(posX, posY, posZ);
+    cena.add(grupoTocha);
+    
+    // Adiciona o bastão na lista de colisões para que o jogador não atravesse
+    objetosRaycast.push(bastao); 
+}
+
+function criarModeloCama() {
+    const grupoCama = new THREE.Group();
+
+    // 1. Base/Estrado de Madeira Escura
+    const geoBase = new THREE.BoxGeometry(1.4, 0.3, 2.2);
+    const matBase = new THREE.MeshLambertMaterial({ color: 0x5c4033 });
+    const meshBase = new THREE.Mesh(geoBase, matBase);
+    meshBase.position.y = 0.15;
+    grupoCama.add(meshBase);
+
+    // 2. Colchão Branco
+    const geoColchao = new THREE.BoxGeometry(1.3, 0.25, 2.0);
+    const matColchao = new THREE.MeshLambertMaterial({ color: 0xfafafa });
+    const meshColchao = new THREE.Mesh(geoColchao, matColchao);
+    meshColchao.position.set(0, 0.425, -0.05);
+    grupoCama.add(meshColchao);
+
+    // 3. Travesseiro Macio (na cabeceira da cama)
+    const geoTravesseiro = new THREE.BoxGeometry(1.1, 0.1, 0.4);
+    const matTravesseiro = new THREE.MeshLambertMaterial({ color: 0xdddddd });
+    const meshTravesseiro = new THREE.Mesh(geoTravesseiro, matTravesseiro);
+    meshTravesseiro.position.set(0, 0.6, -0.8);
+    grupoCama.add(meshTravesseiro);
+
+    return grupoCama;
+}
+
 function executarConstrucaoReal() {
     if(!hologramaVisual || !hologramaVisual.visible) return;
     const posAlvo = hologramaVisual.position.clone();
     if(posAlvo.y <= NIVEL_DA_AGUA + 0.1) { mostrarNotificacao("Impossível construir na água!", "#ef4444"); return; }
     
     const posJ = controles.getObject().position;
-    const larguraCasa = (tipoCasaParaConstruir === 'g') ? 14 : 7;
-    const profundidadeCasa = 6;
     
-    if (Math.abs(posJ.x - posAlvo.x) < larguraCasa/2 + 0.5 && Math.abs(posJ.z - posAlvo.z) < profundidadeCasa/2 + 0.5) {
-        mostrarNotificacao("Saia do meio para construir a casa!", "#ef4444");
-        return;
+    // ✨ ATUALIZADO: Adicionámos as dimensões da cama (1.4 de largura, 2.2 de profundidade)
+    const larguraEspaco = (tipoCasaParaConstruir === 'g') ? 14 : ((tipoCasaParaConstruir === 'fogueira' || tipoCasaParaConstruir === 'piso') ? 2 : ((tipoCasaParaConstruir === 'tocha') ? 0.4 : ((tipoCasaParaConstruir === 'cama') ? 1.4 : 7)));
+    const profEspaco = (tipoCasaParaConstruir === 'fogueira' || tipoCasaParaConstruir === 'piso') ? 2 : ((tipoCasaParaConstruir === 'tocha') ? 0.4 : ((tipoCasaParaConstruir === 'cama') ? 2.2 : 6));
+    
+    if (Math.abs(posJ.y - posAlvo.y) < 2) {
+        if (Math.abs(posJ.x - posAlvo.x) < larguraEspaco/2 + 0.5 && Math.abs(posJ.z - posAlvo.z) < profEspaco/2 + 0.5) {
+            mostrarNotificacao("Saia do meio para construir!", "#ef4444");
+            return;
+        }
     }
 
-    construirCasaDetalhada(tipoCasaParaConstruir, posAlvo.x, posAlvo.y, posAlvo.z, anguloRotacaoHolograma); 
+    // Identifica o que construir e executa a função correta
+    if (tipoCasaParaConstruir === 'fogueira') {
+        construirFogueiraFisica(posAlvo.x, posAlvo.y, posAlvo.z);
+    } else if (tipoCasaParaConstruir === 'piso') {
+        construirPisoPedra(posAlvo.x, posAlvo.y, posAlvo.z, anguloRotacaoHolograma);
+    } else if (tipoCasaParaConstruir === 'tocha') {
+        construirTochaFisica(posAlvo.x, posAlvo.y, posAlvo.z);
+    } else if (tipoCasaParaConstruir === 'cama') { 
+        // ✨ ADICIONADO: Criação física da cama no mundo
+        const camaReal = criarModeloCama();
+        camaReal.position.set(posAlvo.x, posAlvo.y, posAlvo.z);
+        camaReal.rotation.y = anguloRotacaoHolograma;
+        
+        cena.add(camaReal);
+        objetosRaycast.push(camaReal); // Permite detetar a cama com o olhar se necessário
+
+        // Regista a colisão sólida no mundo para o jogador não a atravessar a andar
+        const infoColisaoCama = {
+            x: posAlvo.x,
+            z: posAlvo.z,
+            raio: 0.9, // Raio ideal de colisão para a área da cama
+            topoY: posAlvo.y + 0.6 // Altura de colisão
+        };
+        objetosMundo.push(infoColisaoCama);
+    } else {
+        // Se não for nenhum dos anteriores, constrói uma casa (p, m ou g)
+        construirCasaDetalhada(tipoCasaParaConstruir, posAlvo.x, posAlvo.y, posAlvo.z, anguloRotacaoHolograma); 
+    }
+    
+    // Remove 1 planta do inventário
     inventario['planta_' + tipoCasaParaConstruir]--;
     
     if(inventario['planta_' + tipoCasaParaConstruir] <= 0) { 
         inventario['planta_' + tipoCasaParaConstruir] = 0;
         itemAtivo = 'machado'; 
     }
+    
     atualizarUIAktiv();
 }
-
 // --- LOOP DE ANIMAÇÃO PRINCIPAL ---
 const relogio = new THREE.Clock(); let tempoCiclo = 0.5; 
 
 function animar() {
     requestAnimationFrame(animar); const delta = Math.min(relogio.getDelta(), 0.1);
+
+    
 
     if (texturaAgua) { texturaAgua.offset.x -= 0.6 * delta; texturaAgua.offset.y += 0.05 * delta; }
     
@@ -631,7 +1038,7 @@ function animar() {
     raycaster.setFromCamera(vetorCentroTela, camera);
     const interseccoes = raycaster.intersectObjects(objetosRaycast, true);
     
-    let achouObjetoPerto = false, promptTexto = "Pressione E para Interagir", arvoreOlhada = null;
+  let achouObjetoPerto = false, promptTexto = "Pressione E para Interagir", arvoreOlhada = null, rochaOlhada = null;
 
     if(interseccoes.length > 0 && interseccoes[0].distance < 4.0) {
         let objOcular = interseccoes[0].object;
@@ -641,12 +1048,14 @@ function animar() {
             while(cur && cur.type !== 'Scene') {
                 if(cur.userData && cur.userData.ePorta) { achouObjetoPerto = true; promptTexto = "Pressione E para abrir/fechar a Porta"; break; }
                 if(cur.userData && cur.userData.dadosArvore) { arvoreOlhada = cur.userData.dadosArvore; break; }
+                if(cur.userData && cur.userData.dadosRocha) { rochaOlhada = cur.userData.dadosRocha; break; }
                 cur = cur.parent;
             }
         }
     }
     
-    if (arvoreOlhada && estaMinando && itemAtivo === 'machado') {
+    // Mineração de Árvores
+if (arvoreOlhada && estaMinando && itemAtivo === 'machado') {
         if (arvoreSendoCortada !== arvoreOlhada) { arvoreSendoCortada = arvoreOlhada; tempoSegurandoClique = 0; }
         tempoSegurandoClique += delta;
         if (barraProgressoContainer && barraProgressoContainer.style.display !== 'block') barraProgressoContainer.style.display = 'block';
@@ -661,10 +1070,56 @@ function animar() {
             let iRay = objetosRaycast.indexOf(arvoreSendoCortada.meshRaiz); if (iRay > -1) objetosRaycast.splice(iRay, 1);
             estaMinando = false; tempoSegurandoClique = 0; arvoreSendoCortada = null; if(barraProgressoContainer) barraProgressoContainer.style.display = 'none';
         }
-    } else {
-        if (estaMinando && arvoreSendoCortada) estaMinando = false; 
-        tempoSegurandoClique = 0; arvoreSendoCortada = null;
-        if (barraProgressoContainer && barraProgressoContainer.style.display !== 'none') barraProgressoContainer.style.display = 'none';
+    } 
+    // Mineração de Rochas (4 Segundos) - COM SISTEMA DE DROP ALEATÓRIO
+    // Mineração de Rochas (4 Segundos)
+    else if (rochaOlhada && estaMinando && itemAtivo === 'picareta') {
+        if (rochaSendoMinerada !== rochaOlhada) { rochaSendoMinerada = rochaOlhada; tempoSegurandoClique = 0; }
+        tempoSegurandoClique += delta;
+        if (barraProgressoContainer && barraProgressoContainer.style.display !== 'block') barraProgressoContainer.style.display = 'block';
+        if (barraProgressoPreenchimento) barraProgressoPreenchimento.style.width = Math.min(100, (tempoSegurandoClique / 4.0 * 100)) + '%';
+        
+        if (tempoSegurandoClique >= 4.0) {
+            // 1. Sempre adiciona as pedras padrão da rocha
+            inventario.pedra += rochaSendoMinerada.pedrasDisponiveis; 
+            const txtPedra = document.getElementById('txt-qtd-pedra');
+            if(txtPedra) txtPedra.innerText = inventario.pedra;
+
+            // 2. Lógica de chances
+            let chance = Math.random();
+
+            if (chance < 0.30) {
+                // 30% de chance: Apenas as pedras
+                mostrarNotificacao(`+${rochaSendoMinerada.pedrasDisponiveis} Pedras`);
+            } 
+            else if (chance < 0.60) {
+                // +30% de chance: Ganha 1 Ferro
+                inventario.ferro = (inventario.ferro || 0) + 1;
+                const txtFerro = document.getElementById('txt-qtd-ferro');
+                if(txtFerro) txtFerro.innerText = inventario.ferro;
+                mostrarNotificacao(`+${rochaSendoMinerada.pedrasDisponiveis} Pedras e +1 Fragm. de Ferro!`);
+            } 
+            else if (chance < 0.85) {
+                // +25% de chance: Ganha 1 Cobre
+                inventario.cobre = (inventario.cobre || 0) + 1;
+                const txtCobre = document.getElementById('txt-qtd-cobre');
+                if(txtCobre) txtCobre.innerText = inventario.cobre;
+                mostrarNotificacao(`+${rochaSendoMinerada.pedrasDisponiveis} Pedras e +1 Fragm. de Cobre!`);
+            } 
+            else {
+                // 15% de chance restante: Ganha 1 Ouro
+                inventario.ouro = (inventario.ouro || 0) + 1;
+                const txtOuro = document.getElementById('txt-qtd-ouro');
+                if(txtOuro) txtOuro.innerText = inventario.ouro;
+                mostrarNotificacao(`+${rochaSendoMinerada.pedrasDisponiveis} Pedras e +1 Fragm. de Ouro! ✨`);
+            }
+
+            // 3. Remove a rocha do mundo
+            cena.remove(rochaSendoMinerada.meshRaiz);
+            let iMundo = objetosMundo.indexOf(rochaSendoMinerada); if (iMundo > -1) objetosMundo.splice(iMundo, 1);
+            let iRay = objetosRaycast.indexOf(rochaSendoMinerada.meshRaiz); if (iRay > -1) objetosRaycast.splice(iRay, 1);
+            estaMinando = false; tempoSegurandoClique = 0; rochaSendoMinerada = null; if(barraProgressoContainer) barraProgressoContainer.style.display = 'none';
+        }
     }
     
 let pertoDeEscada = false;
@@ -692,19 +1147,50 @@ let pertoDeEscada = false;
         promptInteracao.innerText = promptTexto;
     }
 
-    if (modoConstrucaoAtivo && hologramaVisual) {
-        let pChao = interseccoes.find(i => i.object === terreno || i.object === agua);
-        if(pChao) {
-            hologramaVisual.visible = true; let hc = obterAlturaTerreno(pChao.point.x, pChao.point.z);
-            hologramaVisual.position.set(pChao.point.x, hc, pChao.point.z);
+   if (modoConstrucaoAtivo && hologramaVisual) {
+        // Procura a primeira superfície que aponta para cima (chão da casa, segundo andar, terreno ou água)
+        let chaoValido = interseccoes.find(i => 
+            (i.face && i.face.normal.y > 0.5) || 
+            (i.object === terreno || i.object === agua)
+        );
+
+        if(chaoValido) {
+            hologramaVisual.visible = true; 
+            
+            // Pega a altura EXATA de onde o raio bateu (resolve o problema de afundar ou não subir pro 2º andar)
+            let alturaAlvo = chaoValido.point.y; 
+
+            // Mantém a grade de posicionamento para ficar organizado
+            let grid = (tipoCasaParaConstruir === 'piso' || tipoCasaParaConstruir === 'tocha' || tipoCasaParaConstruir === 'cama') ? 2 : 1;
+            let xAlvo = Math.round(chaoValido.point.x / grid) * grid;
+            let zAlvo = Math.round(chaoValido.point.z / grid) * grid;
+
+            hologramaVisual.position.set(xAlvo, alturaAlvo, zAlvo);
             hologramaVisual.rotation.y = anguloRotacaoHolograma; 
             
-            let corIndicativa = (hc <= NIVEL_DA_AGUA) ? 0xff0000 : 0x00ff00;
+            let corIndicativa = (alturaAlvo <= NIVEL_DA_AGUA) ? 0xff0000 : 0x00ff00;
             hologramaVisual.children.forEach(c => { if(c.material) c.material.color.setHex(corIndicativa); });
-        } else hologramaVisual.visible = false;
+        } else {
+            hologramaVisual.visible = false;
+        }
     }
 
-    tempoCiclo += delta * 0.015; if(tempoCiclo > Math.PI * 2) tempoCiclo = 0;
+
+    // Se o Sol estiver abaixo do horizonte (noite), o tempo passa 4 vezes mais rápido!
+if (luzSol.position.y < 0) {
+    // Noite: dura 3 minutos reais (180 segundos)
+    // Velocidade = (PI) / 180 segundos ≈ 0.01745 por segundo
+    tempoCiclo += delta * 0.01745;
+} else {
+    // Dia: dura 6 minutos reais (360 segundos)
+    // Velocidade = (PI) / 360 segundos ≈ 0.00872 por segundo
+    tempoCiclo += delta * 0.00872;
+}
+
+// Atualiza a posição do sol usando o novo tempoCiclo
+luzSol.position.x = Math.cos(tempoCiclo) * 100;
+luzSol.position.y = Math.sin(tempoCiclo) * 100;
+    //tempoCiclo += delta * 0.015; if(tempoCiclo > Math.PI * 2) tempoCiclo = 0;//
     const sX = Math.cos(tempoCiclo) * 160, sY = Math.sin(tempoCiclo) * 160;
     luzSol.position.set(sX, sY, 50); meshSol.position.set(sX, sY, 50); meshLua.position.set(-sX, -sY, -50);
     const alturaSol = Math.sin(tempoCiclo), fNoite = Math.max(0, Math.min(1, (0.2 - alturaSol) * 5)), fOcaso = Math.max(0, Math.min(1, (0.4 - Math.abs(alturaSol)) * 4)); 
@@ -715,6 +1201,28 @@ let pertoDeEscada = false;
     const posFP = sistemaFumaça.geometry.attributes.position.array;
     for(let i=0; i<countPart; i++) { posFP[i*3+1] += dadosPart[i].vY * delta; posFP[i*3] += dadosPart[i].vX * delta; posFP[i*3+2] += dadosPart[i].vZ * delta; if(posFP[i*3+1] > alturaChaoFogo + 4.5) { posFP[i*3+1] = alturaChaoFogo + 0.2; posFP[i*3] = fogueiraX + (Math.random() - 0.5) * 0.3; posFP[i*3+2] = fogueiraZ + (Math.random() - 0.5) * 0.3; } }
     sistemaFumaça.geometry.attributes.position.needsUpdate = true; luzFogo.intensity = 1.5 + Math.sin(Date.now() * 0.02) * 0.4;
+
+    listaFogueirasDinamicas.forEach(fogueira => {
+        // Faz a luz da fogueira construída oscilar
+        fogueira.luz.intensity = 1.5 + Math.sin(Date.now() * 0.02) * 0.4;
+
+        // Atualiza as partículas de fumaça dela
+        const posFP_Dinamica = fogueira.sistemaParticulas.geometry.attributes.position.array;
+        const countPart_Dinamica = posFP_Dinamica.length / 3;
+
+        for(let i = 0; i < countPart_Dinamica; i++) {
+            posFP_Dinamica[i * 3 + 1] += fogueira.dadosParticulas[i].vY * delta;
+            posFP_Dinamica[i * 3]     += fogueira.dadosParticulas[i].vX * delta;
+            posFP_Dinamica[i * 3 + 2] += fogueira.dadosParticulas[i].vZ * delta;
+
+            if(posFP_Dinamica[i * 3 + 1] > fogueira.yOriginal + 4.5) {
+                posFP_Dinamica[i * 3 + 1] = fogueira.yOriginal + 0.2;
+                posFP_Dinamica[i * 3]     = fogueira.xOriginal + (Math.random() - 0.5) * 0.3;
+                posFP_Dinamica[i * 3 + 2] = fogueira.zOriginal + (Math.random() - 0.5) * 0.3;
+            }
+        }
+        fogueira.sistemaParticulas.geometry.attributes.position.needsUpdate = true;
+    });
 
     velocidade.x -= velocidade.x * 10.0 * delta; velocidade.z -= velocidade.z * 10.0 * delta; velocidade.y -= GRAVIDADE * delta; 
     direcao.z = Number(moverFrente) - Number(moverTras); direcao.x = Number(moverDireita) - Number(moverEsquerda); direcao.normalize();
@@ -835,7 +1343,33 @@ let pertoDeEscada = false;
         if (somAlvo.buffer && !somAlvo.isPlaying) somAlvo.play(); audioAtualTocando = somAlvo;
     } else { camera.position.y = THREE.MathUtils.lerp(camera.position.y, 0, 8 * delta); camera.position.x = THREE.MathUtils.lerp(camera.position.x, 0, 8 * delta); pararSonsDeMovimento(); }
 
+    
     renderizador.render(cena, camera);
 }
 animar();
 window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderizador.setSize(window.innerWidth, window.innerHeight); });
+
+// --- LÓGICA DE ABRIR/FECHAR A MOCHILA ---
+let mochilaAberta = false;
+const mochilaContainer = document.getElementById('mochila-container');
+
+function alternarMochila() {
+    if (menuCraftingAberto) return; // Não abre se estiver na mesa de trabalho
+
+    mochilaAberta = !mochilaAberta;
+    if (mochilaAberta) {
+        mochilaContainer.style.display = 'block';
+        pararSonsDeMovimento();
+        if (!ehTouch) controles.unlock(); // Libera o mouse no PC para o cara fechar se quiser
+    } else {
+        mochilaContainer.style.display = 'none';
+        if (!ehTouch) controles.lock(); // Trava o mouse de volta no jogo
+    }
+}
+
+// Eventos de clique para fechar e botão mobile
+document.getElementById('btn-fechar-mochila')?.addEventListener('click', alternarMochila);
+document.getElementById('btn-mochila-mobile')?.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    alternarMochila();
+});

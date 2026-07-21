@@ -1,32 +1,109 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-select=none">
-    <title> Craft Print</title>
+    <title>Craft Print</title>
     <link rel="stylesheet" href="style.css">
-    
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.9.0/nipplejs.min.js"></script>
 </head>
+
 <body>
 
     <div id="canvas-container"></div>
     <div id="crosshair"></div>
-    
+
     <div id="notificacao">Mensagem</div>
-    
+
     <div id="barra-coleta-container">
         <div id="barra-coleta-progresso"></div>
     </div>
 
+    <div id="tela-start" class="overlay-tela">
+        <div class="conteudo-start">
+            <h1 class="titulo-3d" data-text="CRAFT PRINT">CRAFT PRINT</h1>
+            <p class="subtitulo">Explore, Colete e Construa seu Mundo 3D</p>
+            
+            <div class="painel-botoes">
+                <button id="btn-iniciar-jogo" class="btn-principal">
+                    <span>▶ JOGAR NOW</span>
+                </button>
+                <button id="btn-abrir-controles-start" class="btn-secundario">
+                    🕹️ Ver Controles
+                </button>
+            </div>
+
+            <div class="footer-creditos">Pressione o botão para entrar na floresta</div>
+        </div>
+    </div>
+
+    <div id="menu-pause" class="overlay-tela" style="display: none;">
+        <div class="painel-pause">
+            <h2 class="titulo-pause">JOGO PAUSADO</h2>
+            <div class="linha-divisoria"></div>
+            
+            <div class="menu-pause-opcoes">
+                <button id="btn-retomar" class="btn-pause">▶ Continuar Jogando</button>
+                <button id="btn-controles-pause" class="btn-pause">🕹️ Como Jogar</button>
+                <button id="btn-reiniciar" class="btn-pause btn-danger">🔄 Recarregar Jogo</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-controles" class="overlay-tela" style="display: none;">
+        <div class="conteudo-start">
+            <h2 style="color: #fbbf24; margin-top: 0;">🕹️ CONTROLES</h2>
+            <div style="text-align: left; line-height: 1.8; margin: 20px 0; font-size: 0.95rem; color: #d1d5db;">
+                <p><b>W, A, S, D:</b> Movimentar</p>
+                <p><b>Mouse:</b> Olhar ao redor</p>
+                <p><b>Clique Esquerdo (segurar):</b> Cortar árvores / Minerar</p>
+                <p><b>Teclas [1 a 9]:</b> Alternar itens do inventário</p>
+                <p><b>Tecla [E]:</b> Abrir Mesa de Crafting / Interagir</p>
+                <p><b>Tecla [B]:</b> Abrir Mochila</p>
+                <p><b>Teclas [R / T]:</b> Girar planta de construção</p>
+                <p><b>ESC:</b> Pausar o jogo / Menu</p>
+            </div>
+            <button id="btn-fechar-controles" class="btn-secundario">Fechar</button>
+        </div>
+    </div>
+
     <div id="inventario-hud">
-        <div class="slot-item ativo" id="slot-machado" data-item="machado">🪓<span class="qtd">1</span></div>
-        <div class="slot-item" id="slot-madeira" data-item="madeira">🪵<span class="qtd" id="txt-qtd-madeira">0</span></div>
-        <div class="slot-item" id="slot-casa-p" data-item="planta_p" style="display:none;">📜🏡<span class="qtd">P</span></div>
-        <div class="slot-item" id="slot-casa-m" data-item="planta_m" style="display:none;">📜🏛️<span class="qtd">M</span></div>
-        <div class="slot-item" id="slot-casa-g" data-item="planta_g" style="display:none;">📜🏰<span class="qtd">G</span></div>
+        <div class="slot-item ativo" id="slot-machado" data-item="machado"><span class="numero-atalho">1</span>🪓<span class="qtd">1</span></div>
+        <div class="slot-item" id="slot-picareta" data-item="picareta"><span class="numero-atalho">2</span>⛏️<span class="qtd">1</span></div>
+        
+        <div class="slot-item" id="slot-casa-p" data-item="planta_p" style="display:none;"><span class="numero-atalho">3</span>📜🏡<span class="qtd">P</span></div>
+        <div class="slot-item" id="slot-casa-m" data-item="planta_m" style="display:none;"><span class="numero-atalho">4</span>📜🏛️<span class="qtd">M</span></div>
+        <div class="slot-item" id="slot-casa-g" data-item="planta_g" style="display:none;"><span class="numero-atalho">5</span>📜🏰<span class="qtd">G</span></div>
+        <div class="slot-item" id="slot-fogueira" data-item="planta_fogueira" style="display:none;">
+            <span class="numero-atalho">6</span><img src="img/fogueira.png" alt="Fogo" class="icone-img"><span class="qtd">F</span>
+        </div>
+        <div class="slot-item" id="slot-piso" data-item="planta_piso" style="display:none;">
+            <span class="numero-atalho">7</span><img src="img/piso.png" alt="Piso" class="icone-img"><span class="qtd">0</span>
+        </div>
+        <div class="slot-item" id="slot-tocha" data-item="planta_tocha" style="display:none;">
+            <span class="numero-atalho">8</span>🕯️<span class="qtd">0</span>
+        </div>
+        <div class="slot-item" id="slot-cama" data-item="planta_cama" style="display:none;">
+            <span class="numero-atalho">9</span>🛏️<span class="qtd">0</span>
+        </div>
+    </div>
+
+    <div id="mochila-container">
+        <div class="mochila-header">
+            <h2>🎒 Sua Mochila</h2>
+            <button id="btn-fechar-mochila">X</button>
+        </div>
+        <div class="mochila-grid">
+            <div class="slot-item" id="slot-madeira"><span style="font-size: 26px;">🪵</span><span class="qtd" id="txt-qtd-madeira">0</span></div>
+            <div class="slot-item" id="slot-pedra"><span style="font-size: 26px;">🪨</span><span class="qtd" id="txt-qtd-pedra">0</span></div>
+            <div class="slot-item" id="slot-ferro"><img style="height: 65%; width: 90%;" src="img/ferro.png" alt=""><span class="qtd" id="txt-qtd-ferro">0</span></div>
+            <div class="slot-item" id="slot-cobre"><img style="height: 65%; width: 90%;" src="img/cobre.png" alt=""><span class="qtd" id="txt-qtd-cobre">0</span></div>
+            <div class="slot-item" id="slot-ouro"><img style="height: 65%; width: 90%;" src="img/ouro.png" alt=""><span class="qtd" id="txt-qtd-ouro">0</span></div>
+        </div>
     </div>
 
     <div id="menu-crafting">
@@ -38,43 +115,43 @@
             <button onclick="craftarConstrucao('p', 20)">Criar Planta</button>
         </div>
         <div class="opcao-craft" id="craft-casa-m">
-            <span>🏛️ Casa Média (30 Madeiras)</span>
+            <span>🏡  Casa Média (30 Madeiras)</span>
             <button onclick="craftarConstrucao('m', 30)">Criar Planta</button>
         </div>
         <div class="opcao-craft" id="craft-casa-g">
-            <span>🏰 Casa Grande (45 Madeiras)</span>
+            <span>🏡  Casa Grande (45 Madeiras)</span>
             <button onclick="craftarConstrucao('g', 45)">Criar Planta</button>
         </div>
+        <div class="opcao-craft" id="craft-fogueira">
+            <span>🔥 Fogueira (2 Madeiras, 4 Pedras)</span>
+            <button onclick="craftarConstrucao('fogueira', 2, 4)">Criar Planta</button>
+        </div>
+        <div class="opcao-craft" id="craft-piso">
+            <span>🛤️ Piso de Pedra x10 (6 Pedras)</span>
+            <button onclick="craftarConstrucao('piso', 0, 6)">Criar Planta</button>
+        </div>
+        <div class="opcao-craft" id="craft-tocha">
+            <span>🕯️ Tocha (1 Madeira, 1 Pedra)</span>
+            <button onclick="craftarConstrucao('tocha', 1, 1)">Criar Planta</button>
+        </div>
+        <div class="opcao-craft" id="craft-cama">
+            <span>🛏️ Cama (4 Madeiras)</span>
+            <button onclick="craftarConstrucao('cama', 4, 0)">Criar Planta</button>
+        </div>
+      
         <br>
         <button id="btn-fechar-crafting">Fechar [E]</button>
     </div>
-    
+
     <div id="aviso-orientacao">
         <p>Por favor, vire o celular na <b>Horizontal</b> para jogar!</p>
     </div>
 
-    <div id="instrucoes">
-        <h1>Craft Print</h1>
-        <p>PC: W,A,S,D para andar | Clique Segurado nas Árvores para cortar.</p>
-        <p>Numerais [1 a 5] para alternar itens | Teclas [R / T] para girar a planta.</p>
-        <p><b>Toque/Clique para Começar</b></p>
-    </div>
-    
     <button id="btn-fullscreen">Fullscreen ⛶</button>
-
-    <div id="controles-mobile">
-        <div id="zona-joystick"></div>
-        <div id="zona-botoes">
-            <button id="btn-girar-planta" class="btn-mobile" style="display: none;">🔄</button>
-            <button id="btn-lanterna" class="btn-mobile">🔦</button>
-            <button id="btn-pulo" class="btn-mobile">🪂</button>
-            <button id="btn-interagir" class="btn-mobile">🔑</button>
-            <button id="btn-corrida" class="btn-mobile">🏃</button>
-        </div>
-    </div>
 
     <div id="prompt-interacao">Pressione E para Interagir</div>
 
     <script src="script.js"></script>
 </body>
+
 </html>
