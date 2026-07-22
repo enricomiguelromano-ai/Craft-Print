@@ -5,7 +5,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-select=none">
     <title>Craft Print</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=5">
+
+    <script>
+        // DIAGNÓSTICO TEMPORÁRIO: mostra qualquer erro de JavaScript na tela
+        // (útil pra ver erros no celular, onde não dá pra abrir o console facilmente).
+        // Pode remover esse bloco depois que o jogo estiver funcionando.
+        window.onerror = function (mensagem, url, linha, coluna, erro) {
+            alert('ERRO NO JOGO:\n' + mensagem + '\n\nArquivo: ' + url + '\nLinha: ' + linha + ':' + coluna);
+            return false;
+        };
+    </script>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
@@ -151,7 +161,22 @@
 
     <div id="prompt-interacao">Pressione E para Interagir</div>
 
-    <script src="script.js"></script>
+    <div id="controles-mobile" style="display: none;">
+        <div id="zona-joystick"></div>
+        <div id="botoes-acao-mobile">
+            <button id="btn-interagir" class="btn-touch">✋ Interagir</button>
+            <button id="btn-pulo" class="btn-touch">⬆ Pular</button>
+            <button id="btn-lanterna" class="btn-touch">🔦 Lanterna</button>
+            <button id="btn-corrida" class="btn-touch">⚡ Correr</button>
+            <button id="btn-mochila-mobile" class="btn-touch">🎒 Mochila</button>
+            <button id="btn-girar-planta" class="btn-touch" style="display: none;">🔄 Girar</button>
+        </div>
+    </div>
+
+    <script src="script.js?v=5"></script>
 </body>
+</html>
+
+  
 
 </html>
