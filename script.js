@@ -1,6 +1,6 @@
 // --- 🎵 CONFIGURAÇÃO DOS SEUS ARQUIVOS MP3 e IMAGENS 🎵 ---
 const ARQUIVOS_DE_AUDIO = {
-    musicaFundo: 'music.mp3', passoNormal: 'sounds/walk.mp3',
+    musicaFundo: 'sounds/craftprintMusic.mp3', passoNormal: 'sounds/walk.mp3',
     passoCorrer: 'sounds/run.mp3', passoAgua: 'sounds/walk_water.mp3',
     lanterna: 'sounds/click_lantern.mp3', portaAbrir: 'sounds/open_door.mp3',
     portaFechar: 'sounds/close_door.mp3', pulo: 'sounds/jump.mp3'
@@ -65,6 +65,8 @@ container.appendChild(renderizador.domElement);
 
 let ehTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 let moverFrente = false, moverTras = false, moverEsquerda = false, moverDireita = false, podeSaltar = false, correndo = false, lanternaLigada = false;
+// Quanto o joystick foi empurrado (0 a 1). No teclado fica sempre em 1 (sem efeito).
+let multiplicadorJoystick = 1;
 
 // OTIMIZAÇÃO: Vetores fixos para evitar sobrecarga de memória nas rotações da casa
 const vetorColisaoAux = new THREE.Vector3();
@@ -80,14 +82,27 @@ if (ehTouch && typeof nipplejs !== 'undefined') {
         color: 'white'
     });
     manager.on('move', (evt, data) => {
-        moverFrente = false; moverTras = false; moverEsquerda = false; moverDireita = false;
         const angle = data.angle.degree;
-        if (angle > 45 && angle < 135) moverFrente = true;
-        else if (angle > 225 && angle < 315) moverTras = true;
-        if (angle <= 45 || angle >= 315) moverDireita = true;
-        else if (angle >= 135 && angle <= 225) moverEsquerda = true;
+        // CORREÇÃO (jogabilidade estranha no celular): antes cada direção ocupava uma
+        // fatia de 90° sem sobreposição, então só dava pra andar reto pra frente, trás,
+        // esquerda ou direita — nunca na diagonal (diferente do teclado, onde W+D juntos
+        // andam na diagonal). Agora cada direção cobre 135°, com 45° de sobreposição
+        // entre direções vizinhas, então empurrar o joystick "entre" duas direções
+        // ativa as duas ao mesmo tempo e anda na diagonal, igual no PC.
+        moverDireita = (angle <= 67.5 || angle >= 292.5);
+        moverFrente = (angle >= 22.5 && angle <= 157.5);
+        moverEsquerda = (angle >= 112.5 && angle <= 247.5);
+        moverTras = (angle >= 202.5 && angle <= 337.5);
+
+        // Empurrar o joystick só um pouquinho agora anda mais devagar (em vez de sempre
+        // andar na velocidade máxima assim que encosta o dedo), o que deixa mais fácil
+        // se posicionar com precisão perto de árvores/pedras/construções.
+        multiplicadorJoystick = Math.min(data.force, 1);
     });
-    manager.on('end', () => { moverFrente = moverTras = moverEsquerda = moverDireita = false; });
+    manager.on('end', () => {
+        moverFrente = moverTras = moverEsquerda = moverDireita = false;
+        multiplicadorJoystick = 1;
+    });
 }
 
 // --- LISTAS DE INTERAÇÃO E FÍSICA ---
@@ -257,15 +272,17 @@ window.addEventListener('keydown', (e) => {
 // CORREÇÃO: removida a linha "cena.add(controles.getObject())". A câmera já é
 // filha de cameraContainer (que já está na cena) — adicioná-la de novo direto na
 // cena a tirava do cameraContainer e quebrava o giro/posicionamento no mobile.
-let toqueIniciado = false, anteriorToqueX = 0, anteriorToqueY = 0;
-window.addEventListener('touchstart', (e) => {
-    const joystickZone = document.getElementById('zona-joystick');
-    if (e.target.tagName !== 'BUTTON' && (!joystickZone || !joystickZone.contains(e.target)) && menuCrafting.style.display !== 'block') {
-        toqueIniciado = true; anteriorToqueX = e.touches[0].pageX; anteriorToqueY = e.touches[0].pageY;
-    }
-}, { passive: true });
-window.addEventListener('touchmove', (e) => { if (!toqueIniciado) return; const movX = e.touches[0].pageX - anteriorToqueX, movY = e.touches[0].pageY - anteriorToqueY; cameraContainer.rotation.y -= movX * 0.005; camera.rotation.x -= movY * 0.005; camera.rotation.x = Math.max(-Math.PI / 2.5, Math.min(Math.PI / 2.5, camera.rotation.x)); anteriorToqueX = e.touches[0].pageX; anteriorToqueY = e.touches[0].pageY; }, { passive: true });
-window.addEventListener('touchend', () => { toqueIniciado = false; });
+//
+// CORREÇÃO (sensibilidade estranha no celular): existia um SEGUNDO sistema de
+// câmera por toque aqui, rodando ao mesmo tempo que o sistema lá perto da linha
+// ~1500 (touchOlharId). Os dois escutavam 'touchstart/touchmove/touchend' na
+// window e giravam a câmera ao mesmo tempo — só que um girava
+// "cameraContainer.rotation.y" (não usado pelo cálculo de movimento, que só
+// olha a matriz local da própria câmera) e o outro girava "camera.rotation.y"
+// diretamente. Resultado: girar a câmera ficava dessincronizado do "pra onde
+// o WASD/joystick anda", travado e "duplicado". Removido daqui; o único
+// sistema de câmera por toque agora é o de baixo (mais completo: por
+// identifier de toque, só no lado direito da tela, ignorando botões).
 
 const velocidade = new THREE.Vector3(), direcao = new THREE.Vector3();
 const ALTURA_JOGADOR = 2.0, FORCA_SALTO = 14.0, GRAVIDADE = 38.0; let VELOCIDADE_BASE = 90.0;
@@ -1330,8 +1347,8 @@ function animar() {
     
     const redutorAgua = estaNaAgua ? 0.45 : 1.0, multV = correndo ? 1.7 : 1.0;
     
-    if (moverFrente || moverTras) velocidade.z -= direcao.z * VELOCIDADE_BASE * multV * redutorAgua * delta;
-    if (moverEsquerda || moverDireita) velocidade.x -= direcao.x * VELOCIDADE_BASE * multV * redutorAgua * delta;
+    if (moverFrente || moverTras) velocidade.z -= direcao.z * VELOCIDADE_BASE * multV * multiplicadorJoystick * redutorAgua * delta;
+    if (moverEsquerda || moverDireita) velocidade.x -= direcao.x * VELOCIDADE_BASE * multV * multiplicadorJoystick * redutorAgua * delta;
     if (estaNaAgua) { velocidade.x *= 0.85; velocidade.z *= 0.85; }
 
     // 2. MOVA O JOGADOR NA HORIZONTAL PRIMEIRO (A Mágica acontece aqui)
@@ -1496,17 +1513,36 @@ document.getElementById('btn-mochila-mobile')?.addEventListener('touchstart', (e
     alternarMochila();
 });
 
-// --- CONTROLE DE CÂMERA POR TOUCH (CELULAR) ---
+// --- CONTROLE DE CÂMERA POR TOQUE (CELULAR) ---
+// Toque no lado direito da tela = olhar ao redor (o esquerdo fica livre pro
+// joystick). Um único dedo é rastreado pelo "identifier" dele, então tocar em
+// botões, no joystick ou em menus com o outro dedo não atrapalha mais.
+
+// Ajuste este número pra deixar a câmera mais rápida (maior) ou mais lenta
+// (menor) de girar no celular. Ele é dividido pela largura da tela, então o
+// "sentimento" (quanto a câmera gira por polegada arrastada) fica parecido em
+// celulares com telas de tamanhos/resoluções diferentes.
+const SENSIBILIDADE_CAMERA_TOUCH = 1.3;
+
 let touchOlharId = null;
 let touchOlharAnteriorX = 0;
 let touchOlharAnteriorY = 0;
 
+// Evita começar a "olhar ao redor" quando o dedo toca em botões mobile,
+// no joystick ou em algum menu/overlay aberto (mochila, crafting, pause etc).
+function toqueEmAreaDeUI(alvo) {
+    if (!alvo || typeof alvo.closest !== 'function') return false;
+    return !!alvo.closest('#zona-joystick, #botoes-acao-mobile, .btn-touch, button, #menu-crafting, #mochila-container, .overlay-tela');
+}
+
 window.addEventListener('touchstart', (e) => {
     if (!jogoIniciado || jogoPausado || !ehTouch) return;
+    if (mochilaAberta || menuCraftingAberto) return;
+
     for (let i = 0; i < e.changedTouches.length; i++) {
         const touch = e.changedTouches[i];
-        // Toque no lado direito da tela para girar a câmera
-        if (touch.clientX > window.innerWidth / 2 && touchOlharId === null) {
+        // Toque no lado direito da tela, fora de botões/menus, para girar a câmera
+        if (touch.clientX > window.innerWidth / 2 && touchOlharId === null && !toqueEmAreaDeUI(touch.target)) {
             touchOlharId = touch.identifier;
             touchOlharAnteriorX = touch.clientX;
             touchOlharAnteriorY = touch.clientY;
@@ -1522,7 +1558,8 @@ window.addEventListener('touchmove', (e) => {
             const deltaX = touch.clientX - touchOlharAnteriorX;
             const deltaY = touch.clientY - touchOlharAnteriorY;
 
-            const sensibilidade = 0.003;
+            // Normalizado pela largura da tela (ver comentário no topo do bloco)
+            const sensibilidade = SENSIBILIDADE_CAMERA_TOUCH / window.innerWidth;
             camera.rotation.y -= deltaX * sensibilidade;
             camera.rotation.x -= deltaY * sensibilidade;
 
