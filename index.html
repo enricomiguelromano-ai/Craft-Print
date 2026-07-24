@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-select=none">
     <title>Craft Print</title>
-    <link rel="stylesheet" href="style.css?v=5">
+    <link rel="stylesheet" href="style.css?v=8">
 
     <script>
         // DIAGNÓSTICO TEMPORÁRIO: mostra qualquer erro de JavaScript na tela
@@ -81,26 +81,9 @@
         </div>
     </div>
 
-    <div id="inventario-hud">
-        <div class="slot-item ativo" id="slot-machado" data-item="machado"><span class="numero-atalho">1</span>🪓<span class="qtd">1</span></div>
-        <div class="slot-item" id="slot-picareta" data-item="picareta"><span class="numero-atalho">2</span>⛏️<span class="qtd">1</span></div>
-        
-        <div class="slot-item" id="slot-casa-p" data-item="planta_p" style="display:none;"><span class="numero-atalho">3</span>📜🏡<span class="qtd">P</span></div>
-        <div class="slot-item" id="slot-casa-m" data-item="planta_m" style="display:none;"><span class="numero-atalho">4</span>📜🏛️<span class="qtd">M</span></div>
-        <div class="slot-item" id="slot-casa-g" data-item="planta_g" style="display:none;"><span class="numero-atalho">5</span>📜🏰<span class="qtd">G</span></div>
-        <div class="slot-item" id="slot-fogueira" data-item="planta_fogueira" style="display:none;">
-            <span class="numero-atalho">6</span><img src="img/fogueira.png" alt="Fogo" class="icone-img"><span class="qtd">F</span>
-        </div>
-        <div class="slot-item" id="slot-piso" data-item="planta_piso" style="display:none;">
-            <span class="numero-atalho">7</span><img src="img/piso.png" alt="Piso" class="icone-img"><span class="qtd">0</span>
-        </div>
-        <div class="slot-item" id="slot-tocha" data-item="planta_tocha" style="display:none;">
-            <span class="numero-atalho">8</span>🕯️<span class="qtd">0</span>
-        </div>
-        <div class="slot-item" id="slot-cama" data-item="planta_cama" style="display:none;">
-            <span class="numero-atalho">9</span>🛏️<span class="qtd">0</span>
-        </div>
-    </div>
+    <!-- Os slots aqui dentro agora são criados dinamicamente pelo script.js,
+         na ordem em que o jogador conquista cada item (função renderizarHotbar). -->
+    <div id="inventario-hud"></div>
 
     <div id="mochila-container">
         <div class="mochila-header">
@@ -117,40 +100,126 @@
     </div>
 
     <div id="menu-crafting">
-        <h2>🛠️ Mesa de Trabalho</h2>
-        <p>Gaste suas madeiras para criar plantas de construção:</p>
-        <hr>
-        <div class="opcao-craft" id="craft-casa-p">
-            <span>🏡 Casa Pequena (20 Madeiras)</span>
-            <button onclick="craftarConstrucao('p', 20)">Criar Planta</button>
+        <div class="crafting-header">
+            <h2>🛠️ Mesa de Trabalho</h2>
+            <button id="btn-fechar-crafting" class="btn-fechar-x" aria-label="Fechar">✕</button>
         </div>
-        <div class="opcao-craft" id="craft-casa-m">
-            <span>🏡  Casa Média (30 Madeiras)</span>
-            <button onclick="craftarConstrucao('m', 30)">Criar Planta</button>
+
+        <div class="crafting-saldo">
+            <span class="saldo-chip">🪵 <b id="craft-saldo-madeira">0</b></span>
+            <span class="saldo-chip">🪨 <b id="craft-saldo-pedra">0</b></span>
         </div>
-        <div class="opcao-craft" id="craft-casa-g">
-            <span>🏡  Casa Grande (45 Madeiras)</span>
-            <button onclick="craftarConstrucao('g', 45)">Criar Planta</button>
+
+        <div class="crafting-abas">
+            <button class="aba-craft ativa" data-aba="construcoes">🏠 Construções</button>
+            <button class="aba-craft" data-aba="delimitacao">🚧 Delimitação</button>
+            <button class="aba-craft" data-aba="moveis">🪑 Móveis</button>
+            <button class="aba-craft" data-aba="utilidades">🧰 Utilidades</button>
         </div>
-        <div class="opcao-craft" id="craft-fogueira">
-            <span>🔥 Fogueira (2 Madeiras, 4 Pedras)</span>
-            <button onclick="craftarConstrucao('fogueira', 2, 4)">Criar Planta</button>
+
+        <div class="crafting-grid" data-painel="construcoes">
+            <div class="card-craft" id="craft-casa-p" data-custo-madeira="20" data-custo-pedra="0">
+                <div class="card-icone"><canvas id="canvas-casa-p" class="icone-canvas" width="44" height="44"></canvas></div>
+                <div class="card-nome">Casa Pequena</div>
+                <div class="card-custos"><span class="custo-chip" data-recurso="madeira">🪵 20</span></div>
+                <button onclick="craftarConstrucao('p', 20)">Criar Planta</button>
+            </div>
+            <div class="card-craft" id="craft-casa-m" data-custo-madeira="30" data-custo-pedra="0">
+                <div class="card-icone"><canvas id="canvas-casa-m" class="icone-canvas" width="44" height="44"></canvas></div>
+                <div class="card-nome">Casa Média</div>
+                <div class="card-custos"><span class="custo-chip" data-recurso="madeira">🪵 30</span></div>
+                <button onclick="craftarConstrucao('m', 30)">Criar Planta</button>
+            </div>
+            <div class="card-craft" id="craft-casa-g" data-custo-madeira="45" data-custo-pedra="0">
+                <div class="card-icone"><canvas id="canvas-casa-g" class="icone-canvas" width="44" height="44"></canvas></div>
+                <div class="card-nome">Casa Grande</div>
+                <div class="card-custos"><span class="custo-chip" data-recurso="madeira">🪵 45</span></div>
+                <button onclick="craftarConstrucao('g', 45)">Criar Planta</button>
+            </div>
         </div>
-        <div class="opcao-craft" id="craft-piso">
-            <span>🛤️ Piso de Pedra x10 (6 Pedras)</span>
-            <button onclick="craftarConstrucao('piso', 0, 6)">Criar Planta</button>
+
+        <div class="crafting-grid" data-painel="delimitacao" style="display:none;">
+            <div class="card-craft" id="craft-cerca" data-custo-madeira="10" data-custo-pedra="0">
+                <div class="card-icone"><canvas id="canvas-cerca" class="icone-canvas" width="44" height="44"></canvas></div>
+                <div class="card-nome">Cerca de Madeira x5</div>
+                <div class="card-custos"><span class="custo-chip" data-recurso="madeira">🪵 10</span></div>
+                <button onclick="craftarConstrucao('cerca', 10, 0)">Criar Planta</button>
+            </div>
+            <div class="card-craft" id="craft-muro" data-custo-madeira="0" data-custo-pedra="15">
+                <div class="card-icone"><canvas id="canvas-muro" class="icone-canvas" width="44" height="44"></canvas></div>
+                <div class="card-nome">Muro de Pedra x5</div>
+                <div class="card-custos"><span class="custo-chip" data-recurso="pedra">🪨 15</span></div>
+                <button onclick="craftarConstrucao('muro', 0, 15)">Criar Planta</button>
+            </div>
         </div>
-        <div class="opcao-craft" id="craft-tocha">
-            <span>🕯️ Tocha (1 Madeira, 1 Pedra)</span>
-            <button onclick="craftarConstrucao('tocha', 1, 1)">Criar Planta</button>
+
+        <div class="crafting-grid" data-painel="moveis" style="display:none;">
+            <div class="card-craft" id="craft-mesa" data-custo-madeira="6" data-custo-pedra="0">
+                <div class="card-icone"><canvas id="canvas-mesa" class="icone-canvas" width="44" height="44"></canvas></div>
+                <div class="card-nome">Mesa</div>
+                <div class="card-custos"><span class="custo-chip" data-recurso="madeira">🪵 6</span></div>
+                <button onclick="craftarConstrucao('mesa', 6, 0)">Criar Planta</button>
+            </div>
+            <div class="card-craft" id="craft-cadeira" data-custo-madeira="3" data-custo-pedra="0">
+                <div class="card-icone"><canvas id="canvas-cadeira" class="icone-canvas" width="44" height="44"></canvas></div>
+                <div class="card-nome">Cadeira</div>
+                <div class="card-custos"><span class="custo-chip" data-recurso="madeira">🪵 3</span></div>
+                <button onclick="craftarConstrucao('cadeira', 3, 0)">Criar Planta</button>
+            </div>
+            <div class="card-craft" id="craft-bau" data-custo-madeira="8" data-custo-pedra="2">
+                <div class="card-icone"><canvas id="canvas-bau" class="icone-canvas" width="44" height="44"></canvas></div>
+                <div class="card-nome">Baú</div>
+                <div class="card-custos">
+                    <span class="custo-chip" data-recurso="madeira">🪵 8</span>
+                    <span class="custo-chip" data-recurso="pedra">🪨 2</span>
+                </div>
+                <button onclick="craftarConstrucao('bau', 8, 2)">Criar Planta</button>
+            </div>
+            <div class="card-craft" id="craft-lareira" data-custo-madeira="3" data-custo-pedra="6">
+                <div class="card-icone"><canvas id="canvas-lareira" class="icone-canvas" width="44" height="44"></canvas></div>
+                <div class="card-nome">Lareira</div>
+                <div class="card-custos">
+                    <span class="custo-chip" data-recurso="madeira">🪵 3</span>
+                    <span class="custo-chip" data-recurso="pedra">🪨 6</span>
+                </div>
+                <button onclick="craftarConstrucao('lareira', 3, 6)">Criar Planta</button>
+            </div>
         </div>
-        <div class="opcao-craft" id="craft-cama">
-            <span>🛏️ Cama (4 Madeiras)</span>
-            <button onclick="craftarConstrucao('cama', 4, 0)">Criar Planta</button>
+
+        <div class="crafting-grid" data-painel="utilidades" style="display:none;">
+            <div class="card-craft" id="craft-fogueira" data-custo-madeira="2" data-custo-pedra="4">
+                <div class="card-icone"><img src="img/fogueira.png" alt="Fogueira" class="icone-craft-img"></div>
+                <div class="card-nome">Fogueira</div>
+                <div class="card-custos">
+                    <span class="custo-chip" data-recurso="madeira">🪵 2</span>
+                    <span class="custo-chip" data-recurso="pedra">🪨 4</span>
+                </div>
+                <button onclick="craftarConstrucao('fogueira', 2, 4)">Criar Planta</button>
+            </div>
+            <div class="card-craft" id="craft-piso" data-custo-madeira="0" data-custo-pedra="6">
+                <div class="card-icone"><img src="img/piso.png" alt="Piso" class="icone-craft-img"></div>
+                <div class="card-nome">Piso de Pedra x10</div>
+                <div class="card-custos"><span class="custo-chip" data-recurso="pedra">🪨 6</span></div>
+                <button onclick="craftarConstrucao('piso', 0, 6)">Criar Planta</button>
+            </div>
+            <div class="card-craft" id="craft-tocha" data-custo-madeira="1" data-custo-pedra="1">
+                <div class="card-icone"><div class="icone-emoji">🕯️</div></div>
+                <div class="card-nome">Tocha</div>
+                <div class="card-custos">
+                    <span class="custo-chip" data-recurso="madeira">🪵 1</span>
+                    <span class="custo-chip" data-recurso="pedra">🪨 1</span>
+                </div>
+                <button onclick="craftarConstrucao('tocha', 1, 1)">Criar Planta</button>
+            </div>
+            <div class="card-craft" id="craft-cama" data-custo-madeira="4" data-custo-pedra="0">
+                <div class="card-icone"><div class="icone-emoji">🛏️</div></div>
+                <div class="card-nome">Cama</div>
+                <div class="card-custos"><span class="custo-chip" data-recurso="madeira">🪵 4</span></div>
+                <button onclick="craftarConstrucao('cama', 4, 0)">Criar Planta</button>
+            </div>
         </div>
-      
-        <br>
-        <button id="btn-fechar-crafting">Fechar [E]</button>
+
+        <div class="crafting-footer">Pressione <b>E</b> ou <b>ESC</b> para fechar</div>
     </div>
 
     <div id="aviso-orientacao">
@@ -173,7 +242,7 @@
         </div>
     </div>
 
-    <script src="script.js?v=5"></script>
+    <script src="script.js?v=8"></script>
 </body>
 </html>
 

@@ -21,10 +21,59 @@ let inventario = {
     planta_piso: 0,
     planta_tocha: 0,
     planta_cama: 0, // <-- ADICIONADO AQUI
+    planta_cerca: 0,
+    planta_muro: 0,
+    planta_mesa: 0,
+    planta_cadeira: 0,
+    planta_bau: 0,
+    planta_lareira: 0,
     ferro: 0,
     cobre: 0,
     ouro: 0
 };
+
+// --- SISTEMA DE HOTBAR DINÂMICA (10 espaços: teclas 1 a 9, depois 0) ---
+// Cada item ganha seu número automaticamente na primeira vez que o jogador o
+// possui (machado/picareta entram primeiro, pois já vêm no inventário inicial).
+// Uma vez atribuído, o número fica reservado para aquele item para sempre —
+// mesmo que a quantidade dele chegue a 0 e o slot suma da hotbar por um tempo,
+// ele volta a aparecer no MESMO número quando o jogador conseguir mais.
+// Só entram nessa lista os itens "equipáveis" (ferramentas e plantas de
+// construção); madeira/pedra/ferro/cobre/ouro continuam só na mochila.
+const LIMITE_HOTBAR = 10;
+let hotbar = new Array(LIMITE_HOTBAR).fill(null);
+
+const CONFIG_ITENS_HOTBAR = {
+    machado: { icone: { tipo: 'emoji', valor: '🪓' } },
+    picareta: { icone: { tipo: 'emoji', valor: '⛏️' } },
+    planta_p: { icone: { tipo: 'emoji', valor: '📜🏡' }, rotulo: 'P' },
+    planta_m: { icone: { tipo: 'emoji', valor: '📜🏛️' }, rotulo: 'M' },
+    planta_g: { icone: { tipo: 'emoji', valor: '📜🏰' }, rotulo: 'G' },
+    planta_fogueira: { icone: { tipo: 'img', valor: 'img/fogueira.png' }, rotulo: 'F' },
+    planta_piso: { icone: { tipo: 'img', valor: 'img/piso.png' } },
+    planta_tocha: { icone: { tipo: 'emoji', valor: '🕯️' } },
+    planta_cama: { icone: { tipo: 'emoji', valor: '🛏️' } },
+    planta_cerca: { icone: { tipo: 'canvas', valor: desenharIconeCerca } },
+    planta_muro: { icone: { tipo: 'canvas', valor: desenharIconeMuro } },
+    planta_mesa: { icone: { tipo: 'canvas', valor: desenharIconeMesa } },
+    planta_cadeira: { icone: { tipo: 'canvas', valor: desenharIconeCadeira } },
+    planta_bau: { icone: { tipo: 'canvas', valor: desenharIconeBau } },
+    planta_lareira: { icone: { tipo: 'canvas', valor: desenharIconeLareira } }
+};
+
+// Tenta reservar um número/posição na hotbar pro item (se ele ainda não tiver).
+// Devolve true se o item já tinha (ou conseguiu) um número; false se a hotbar
+// está cheia (10 itens diferentes) e esse item ainda não fazia parte dela.
+function registrarItemNaHotbar(itemChave) {
+    if (hotbar.includes(itemChave)) return true;
+    const indiceLivre = hotbar.indexOf(null);
+    if (indiceLivre === -1) {
+        mostrarNotificacao('Inventário cheio! Máximo de 10 itens diferentes.', '#ef4444');
+        return false;
+    }
+    hotbar[indiceLivre] = itemChave;
+    return true;
+}
 
 let itemAtivo = 'machado';
 
@@ -39,6 +88,7 @@ let listaFogueirasDinamicas = [];
 // --- CONFIGURAÇÃO INICIAL DO ESPAÇO 3D ---
 const container = document.getElementById('canvas-container');
 
+const inventarioHudEl = document.getElementById('inventario-hud');
 const promptInteracao = document.getElementById('prompt-interacao');
 const btnFullscreen = document.getElementById('btn-fullscreen');
 const controlesMobileDiv = document.getElementById('controles-mobile');
@@ -67,6 +117,19 @@ let ehTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 let moverFrente = false, moverTras = false, moverEsquerda = false, moverDireita = false, podeSaltar = false, correndo = false, lanternaLigada = false;
 // Quanto o joystick foi empurrado (0 a 1). No teclado fica sempre em 1 (sem efeito).
 let multiplicadorJoystick = 1;
+
+// --- SUAVIZAÇÃO DA CÂMERA POR TOQUE (CELULAR) ---
+// Precisa ficar declarado AQUI EM CIMA (antes de animar() rodar pela primeira
+// vez lá embaixo), porque o loop principal lê essas variáveis todo frame.
+// "cameraYawAlvo/cameraPitchAlvo" = pra onde a câmera está tentando chegar;
+// o loop animar() persegue esse alvo suavemente a cada frame.
+let cameraYawAlvo = null;
+let cameraPitchAlvo = null;
+// Quão rápido a câmera "alcança" o alvo a cada frame. Maior = mais em cima do
+// dedo (mais direto, menos fluido). Menor = mais suave/fluido, mas com mais
+// atraso entre o dedo e a câmera. 18 é um meio-termo; tente entre 10 (bem
+// fluido) e 30 (quase instantâneo) pra achar o gosto.
+const VELOCIDADE_SUAVIZACAO_CAMERA_TOUCH = 18;
 
 // OTIMIZAÇÃO: Vetores fixos para evitar sobrecarga de memória nas rotações da casa
 const vetorColisaoAux = new THREE.Vector3();
@@ -292,52 +355,15 @@ let bobAtualY = 0, bobAtualX = 0; // guarda o deslocamento de bobbing já aplica
 let mesaTrabalhoMesh = null, menuCraftingAberto = false;
 
 function atualizarUIAktiv() {
-    const slotP = document.getElementById('slot-casa-p');
-    const slotM = document.getElementById('slot-casa-m');
-    const slotG = document.getElementById('slot-casa-g');
-    const slotFogueira = document.getElementById('slot-fogueira');
-    const slotPiso = document.getElementById('slot-piso');
-    const slotTocha = document.getElementById('slot-tocha');
-    const slotCama = document.getElementById('slot-cama');
+    // Garante que todo item que o jogador já possui tenha um número reservado
+    // na hotbar (isso é o que faz a numeração seguir a ordem de conquista).
+    Object.keys(CONFIG_ITENS_HOTBAR).forEach(chave => {
+        if (inventario[chave] > 0) registrarItemNaHotbar(chave);
+    });
 
-    if (slotP) slotP.style.display = inventario.planta_p > 0 ? 'flex' : 'none';
-    if (slotM) slotM.style.display = inventario.planta_m > 0 ? 'flex' : 'none';
-    if (slotG) slotG.style.display = inventario.planta_g > 0 ? 'flex' : 'none';
-    if (slotFogueira) slotFogueira.style.display = inventario.planta_fogueira > 0 ? 'flex' : 'none';
-
-    // Atualiza o display e a quantidade da cama
-    if (slotCama) {
-        slotCama.style.display = inventario.planta_cama > 0 ? 'flex' : 'none';
-        let spanQtd = slotCama.querySelector('.qtd');
-        if (spanQtd) spanQtd.innerText = inventario.planta_cama;
-    }
-
-    if (slotPiso) {
-        slotPiso.style.display = inventario.planta_piso > 0 ? 'flex' : 'none';
-        let spanQtd = slotPiso.querySelector('.qtd');
-        if (spanQtd) spanQtd.innerText = inventario.planta_piso;
-    }
-
-    if (slotTocha) {
-        slotTocha.style.display = inventario.planta_tocha > 0 ? 'flex' : 'none';
-        let spanQtd = slotTocha.querySelector('.qtd');
-        if (spanQtd) spanQtd.innerText = inventario.planta_tocha;
-    }
-
-    document.querySelectorAll('.slot-item').forEach(el => el.classList.remove('ativo'));
     if (itemAtivo.startsWith('planta_') && inventario[itemAtivo] <= 0) itemAtivo = 'machado';
 
-    // Apenas ferramentas e plantas ficam ativas na Hotbar agora!
-    if (itemAtivo === 'machado') document.getElementById('slot-machado')?.classList.add('ativo');
-    if (itemAtivo === 'picareta') document.getElementById('slot-picareta')?.classList.add('ativo');
-
-    if (itemAtivo === 'planta_p' && slotP) slotP.classList.add('ativo');
-    if (itemAtivo === 'planta_m' && slotM) slotM.classList.add('ativo');
-    if (itemAtivo === 'planta_g' && slotG) slotG.classList.add('ativo');
-    if (itemAtivo === 'planta_fogueira' && slotFogueira) slotFogueira.classList.add('ativo');
-    if (itemAtivo === 'planta_piso' && slotPiso) slotPiso.classList.add('ativo');
-    if (itemAtivo === 'planta_tocha' && slotTocha) slotTocha.classList.add('ativo');
-    if (itemAtivo === 'planta_cama' && slotCama) slotCama.classList.add('ativo'); // <-- ADICIONADO AQUI!
+    renderizarHotbar();
 
     if (itemAtivo.startsWith('planta_') && inventario[itemAtivo] > 0) {
         modoConstrucaoAtivo = true;
@@ -348,6 +374,71 @@ function atualizarUIAktiv() {
         modoConstrucaoAtivo = false; desativarHolograma();
         if (typeof btnGirarPlantaMobile !== 'undefined' && btnGirarPlantaMobile) btnGirarPlantaMobile.style.display = 'none';
     }
+}
+
+// Redesenha a hotbar do zero a partir do array `hotbar`. Só aparecem slots de
+// itens que já têm número reservado E quantidade > 0 no momento (um item sem
+// estoque simplesmente some da barra, mas mantém seu número reservado).
+function renderizarHotbar() {
+    if (!inventarioHudEl) return;
+    inventarioHudEl.innerHTML = '';
+
+    hotbar.forEach((itemChave, indice) => {
+        if (!itemChave) return;
+        const cfg = CONFIG_ITENS_HOTBAR[itemChave];
+        if (!cfg) return;
+        const qtdAtual = inventario[itemChave] || 0;
+        if (qtdAtual <= 0) return;
+
+        const numeroTecla = indice === 9 ? '0' : String(indice + 1);
+
+        const slot = document.createElement('div');
+        slot.className = 'slot-item' + (itemAtivo === itemChave ? ' ativo' : '');
+        slot.dataset.item = itemChave;
+
+        const spanNumero = document.createElement('span');
+        spanNumero.className = 'numero-atalho';
+        spanNumero.innerText = numeroTecla;
+        slot.appendChild(spanNumero);
+
+        if (cfg.icone.tipo === 'emoji') {
+            const spanIcone = document.createElement('span');
+            spanIcone.innerText = cfg.icone.valor;
+            slot.appendChild(spanIcone);
+        } else if (cfg.icone.tipo === 'img') {
+            const img = document.createElement('img');
+            img.src = cfg.icone.valor;
+            img.className = 'icone-img';
+            slot.appendChild(img);
+        } else if (cfg.icone.tipo === 'canvas') {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32; canvas.height = 32;
+            canvas.className = 'icone-canvas';
+            slot.appendChild(canvas);
+            cfg.icone.valor(canvas);
+        }
+
+        const spanQtd = document.createElement('span');
+        spanQtd.className = 'qtd';
+        spanQtd.innerText = cfg.rotulo || qtdAtual;
+        slot.appendChild(spanQtd);
+
+        inventarioHudEl.appendChild(slot);
+    });
+}
+
+// Um único listener "delegado" no container cuida do clique/toque em
+// qualquer slot, mesmo que os slots sejam recriados a cada renderização.
+function tratarCliqueHotbar(e) {
+    const slot = e.target.closest('.slot-item');
+    if (!slot) return;
+    e.stopPropagation();
+
+    const novoItem = slot.dataset.item;
+    if (novoItem.startsWith('planta_') && inventario[novoItem] <= 0) return;
+
+    itemAtivo = novoItem;
+    atualizarUIAktiv();
 }
 
 function atualizarHolograma() {
@@ -383,8 +474,8 @@ function atualizarHolograma() {
     }
 
     if (pontoColisao) {
-        // Mantém pisos, tochas e camas alinhados perfeitamente em uma grade (grid de 2 em 2)
-        let grid = (tipoCasaParaConstruir === 'piso' || tipoCasaParaConstruir === 'tocha' || tipoCasaParaConstruir === 'cama') ? 2 : 1;
+        // Mantém pisos, tochas, camas, cercas e muros alinhados perfeitamente em uma grade (grid de 2 em 2)
+        let grid = TIPOS_GRID_DUPLO.includes(tipoCasaParaConstruir) ? 2 : 1;
 
         let xAlvo = Math.round(pontoColisao.x / grid) * grid;
         let zAlvo = Math.round(pontoColisao.z / grid) * grid;
@@ -398,26 +489,17 @@ function atualizarHolograma() {
         hologramaVisual.visible = false;
     }
 }
-// --- ADIÇÃO: CLIQUE/TOQUE NOS ITENS DO INVENTÁRIO ---
-document.querySelectorAll('.slot-item').forEach(slot => {
-    ['mousedown', 'touchstart'].forEach(tipoEvento => {
-        slot.addEventListener(tipoEvento, (e) => {
-            // e.stopPropagation() é crucial aqui para que o toque não passe para o cenário 
-            // e faça o personagem bater o machado ou construir algo sem querer.
-            e.stopPropagation();
+// --- ADIÇÃO: CLIQUE/TOQUE NOS ITENS DA HOTBAR ---
+// Um único listener no container (em vez de um por slot) porque os slots são
+// recriados a cada renderização — ele "escuta" cliques em qualquer filho .slot-item.
+if (inventarioHudEl) {
+    inventarioHudEl.addEventListener('mousedown', tratarCliqueHotbar);
+    inventarioHudEl.addEventListener('touchstart', tratarCliqueHotbar, { passive: false });
+}
 
-            let novoItem = slot.getAttribute('data-item');
-
-            // Só permite equipar plantas se você tiver pelo menos 1 no inventário
-            if (novoItem.startsWith('planta_') && inventario[novoItem] <= 0) {
-                return;
-            }
-
-            itemAtivo = novoItem;
-            atualizarUIAktiv();
-        });
-    });
-});
+// Renderização inicial: registra machado/picareta (que já vêm no inventário)
+// nos números 1 e 2 e desenha a hotbar pela primeira vez.
+atualizarUIAktiv();
 
 window.addEventListener('keydown', (e) => {
     // Abrir/Fechar Mochila
@@ -427,15 +509,20 @@ window.addEventListener('keydown', (e) => {
         return;
     }
 
-    if (e.code === 'Digit1') { itemAtivo = 'machado'; atualizarUIAktiv(); }
-    if (e.code === 'Digit2') { itemAtivo = 'picareta'; atualizarUIAktiv(); }
-    if (e.code === 'Digit3' && inventario.planta_p > 0) { itemAtivo = 'planta_p'; atualizarUIAktiv(); }
-    if (e.code === 'Digit4' && inventario.planta_m > 0) { itemAtivo = 'planta_m'; atualizarUIAktiv(); }
-    if (e.code === 'Digit5' && inventario.planta_g > 0) { itemAtivo = 'planta_g'; atualizarUIAktiv(); }
-    if (e.code === 'Digit6' && inventario.planta_fogueira > 0) { itemAtivo = 'planta_fogueira'; atualizarUIAktiv(); }
-    if (e.code === 'Digit7' && inventario.planta_piso > 0) { itemAtivo = 'planta_piso'; atualizarUIAktiv(); }
-    if (e.code === 'Digit8' && inventario.planta_tocha > 0) { itemAtivo = 'planta_tocha'; atualizarUIAktiv(); }
-    if (e.code === 'Digit9' && inventario.planta_cama > 0) { itemAtivo = 'planta_cama'; atualizarUIAktiv(); }
+    // Teclas 1-9 e 0 selecionam a POSIÇÃO na hotbar (não mais um item fixo).
+    // Ex.: tecla "3" sempre seleciona o item que está no 3º espaço da hotbar,
+    // seja qual for — o que muda de acordo com a ordem em que foi conquistado.
+    const MAPA_TECLA_PARA_INDICE = {
+        Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3, Digit5: 4,
+        Digit6: 5, Digit7: 6, Digit8: 7, Digit9: 8, Digit0: 9
+    };
+    if (e.code in MAPA_TECLA_PARA_INDICE) {
+        const itemDoSlot = hotbar[MAPA_TECLA_PARA_INDICE[e.code]];
+        if (itemDoSlot && inventario[itemDoSlot] > 0) {
+            itemAtivo = itemDoSlot;
+            atualizarUIAktiv();
+        }
+    }
 
     if (modoConstrucaoAtivo && hologramaVisual) {
         if (e.code === 'KeyR') { anguloRotacaoHolograma += Math.PI / 2; }
@@ -506,7 +593,9 @@ function processarInteracaoGeral() {
                 interagiu = true; break;
             }
             if (noPai === mesaTrabalhoMesh || noPai.parent === mesaTrabalhoMesh) {
-                menuCraftingAberto = true; menuCrafting.style.display = 'block'; pararSonsDeMovimento(); controles.unlock(); return;
+                menuCraftingAberto = true; menuCrafting.style.display = 'block'; pararSonsDeMovimento(); controles.unlock();
+                atualizarEstadoCraftingUI();
+                return;
             }
             noPai = noPai.parent;
         }
@@ -547,14 +636,65 @@ window.craftarConstrucao = function (tipo, custoMadeira, custoPedra = 0) {
         if (tipo === 'piso') inventario.planta_piso += 10;
         if (tipo === 'tocha') inventario.planta_tocha++;
         if (tipo === 'cama') inventario.planta_cama++; // ✨ CORREÇÃO: Faltava esta linha para você receber a cama!
+        if (tipo === 'cerca') inventario.planta_cerca += 5;   // Vem em pacote de 5, igual ao piso
+        if (tipo === 'muro') inventario.planta_muro += 5;     // Vem em pacote de 5, igual ao piso
+        if (tipo === 'mesa') inventario.planta_mesa++;
+        if (tipo === 'cadeira') inventario.planta_cadeira++;
+        if (tipo === 'bau') inventario.planta_bau++;
+        if (tipo === 'lareira') inventario.planta_lareira++;
 
         atualizarUIAktiv();
+        atualizarEstadoCraftingUI();
         mostrarNotificacao("Planta criada! Equipe no inventário.", "#22c55e");
         processarInteracaoGeral();
     } else {
         mostrarNotificacao("Recursos insuficientes!", "#ef4444");
     }
 };
+
+// ============================================================
+// UI DINÂMICA DA MESA DE CRAFTING (saldo + cards indisponíveis)
+// ============================================================
+// Atualiza o saldo mostrado no topo do menu e marca com opacidade reduzida
+// (+ botão desabilitado) qualquer card cujo custo o jogador não pode pagar
+// no momento. É chamado toda vez que a mesa é aberta e após cada crafting.
+function atualizarEstadoCraftingUI() {
+    const elSaldoMadeira = document.getElementById('craft-saldo-madeira');
+    const elSaldoPedra = document.getElementById('craft-saldo-pedra');
+    if (elSaldoMadeira) elSaldoMadeira.innerText = inventario.madeira;
+    if (elSaldoPedra) elSaldoPedra.innerText = inventario.pedra;
+
+    document.querySelectorAll('.card-craft').forEach(card => {
+        const custoMadeira = parseInt(card.dataset.custoMadeira || '0', 10);
+        const custoPedra = parseInt(card.dataset.custoPedra || '0', 10);
+        const faltaMadeira = inventario.madeira < custoMadeira;
+        const faltaPedra = inventario.pedra < custoPedra;
+        const podeFazer = !faltaMadeira && !faltaPedra;
+
+        card.classList.toggle('indisponivel', !podeFazer);
+
+        const botao = card.querySelector('button');
+        if (botao) botao.disabled = !podeFazer;
+
+        card.querySelectorAll('.custo-chip').forEach(chip => {
+            const recurso = chip.dataset.recurso;
+            const faltaEsse = recurso === 'madeira' ? faltaMadeira : faltaPedra;
+            chip.classList.toggle('falta', faltaEsse);
+        });
+    });
+}
+
+// Abas da mesa de trabalho (Construções / Utilidades)
+document.querySelectorAll('.aba-craft').forEach(aba => {
+    aba.addEventListener('click', () => {
+        document.querySelectorAll('.aba-craft').forEach(a => a.classList.remove('ativa'));
+        aba.classList.add('ativa');
+        const alvo = aba.dataset.aba;
+        document.querySelectorAll('.crafting-grid').forEach(grid => {
+            grid.style.display = (grid.dataset.painel === alvo) ? 'grid' : 'none';
+        });
+    });
+});
 document.getElementById('btn-fechar-crafting')?.addEventListener('click', () => processarInteracaoGeral());
 
 document.getElementById('btn-lanterna')?.addEventListener('touchstart', (e) => { e.preventDefault(); alternarLanterna(); });
@@ -674,7 +814,7 @@ const telhadoCab = new THREE.Mesh(new THREE.ConeGeometry(5.2, 2.5, 4), matTelhad
 mesaTrabalhoMesh = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.9, 1.0), new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.7 })); mesaTrabalhoMesh.position.set(1.8, 0.65, -1.5); mesaTrabalhoMesh.castShadow = true; mesaTrabalhoMesh.receiveShadow = true; grupoCabana.add(mesaTrabalhoMesh);
 const tampoVisM = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.1, 1.1), new THREE.MeshStandardMaterial({ color: 0x78350f })); tampoVisM.position.set(1.8, 1.1, -1.5); grupoCabana.add(tampoVisM);
 
-gerarPorta(-0.75, 0.2, 2.5, grupoCabana);
+const portaCabana = gerarPorta(-0.75, 0.2, 2.5, grupoCabana);
 grupoCabana.position.set(cabanaX, hCabana, cabanaZ); cena.add(grupoCabana); objetosRaycast.push(grupoCabana);
 zonasInteriores.push({ tipo: 'casa', x: cabanaX, z: cabanaZ, w: 5.6, d: 4.6, pisos: [hCabana + 0.5], pisoMax: 1 });
 
@@ -684,6 +824,8 @@ objetosMundo.push({ isBox: true, minX: cabanaX + 2.85, maxX: cabanaX + 3.15, min
 objetosMundo.push({ isBox: true, minX: cabanaX - 3, maxX: cabanaX + 3, minZ: cabanaZ - 2.65, maxZ: cabanaZ - 2.35, topoY: hCabana + 4 });
 objetosMundo.push({ isBox: true, minX: cabanaX - 3, maxX: cabanaX - 0.75, minZ: cabanaZ + 2.35, maxZ: cabanaZ + 2.65, topoY: hCabana + 4 });
 objetosMundo.push({ isBox: true, minX: cabanaX + 0.75, maxX: cabanaX + 3, minZ: cabanaZ + 2.35, maxZ: cabanaZ + 2.65, topoY: hCabana + 4 });
+// NOVO: colisão do vão da porta em si — só bloqueia quando a porta está fechada (ver campo "porta" abaixo)
+objetosMundo.push({ isBox: true, minX: cabanaX - 0.75, maxX: cabanaX + 0.75, minZ: cabanaZ + 2.35, maxZ: cabanaZ + 2.65, topoY: hCabana + 4, porta: portaCabana });
 
 // Fogueira e Nuvens
 const fogueiraX = -15, fogueiraZ = -13; const alturaChaoFogo = obterAlturaTerreno(fogueiraX, fogueiraZ);
@@ -744,14 +886,42 @@ function criarEscadaDeParede(grupoPai, x, y, z, altura) {
     grupoPai.add(grupoEscada);
 }
 
+// ============================================================
+// TABELA CENTRAL DE DIMENSÕES DAS CONSTRUÇÕES
+// ============================================================
+// Antes cada tamanho vivia espalhado em vários ternários encadeados
+// (em ativarHolograma e executarConstrucaoReal). Agora é uma tabela só,
+// então adicionar um novo tipo de construção é só adicionar uma linha aqui.
+const DIMENSOES_CONSTRUCAO = {
+    p: { largura: 7, profundidade: 6, altura: 4 },
+    m: { largura: 7, profundidade: 6, altura: 8 },
+    g: { largura: 14, profundidade: 6, altura: 8 },
+    fogueira: { largura: 2, profundidade: 2, altura: 1 },
+    piso: { largura: 2, profundidade: 2, altura: 0.1 },
+    tocha: { largura: 0.4, profundidade: 0.4, altura: 1.5 },
+    cama: { largura: 1.4, profundidade: 2.2, altura: 0.6 },
+    // Delimitação
+    cerca: { largura: 2, profundidade: 0.3, altura: 1.3 },
+    muro: { largura: 2, profundidade: 0.4, altura: 1.8 },
+    // Móveis internos
+    mesa: { largura: 1.3, profundidade: 0.8, altura: 0.75 },
+    cadeira: { largura: 0.55, profundidade: 0.55, altura: 0.9 },
+    bau: { largura: 1.0, profundidade: 0.6, altura: 0.7 },
+    lareira: { largura: 1.7, profundidade: 0.8, altura: 1.7 }
+};
+function obterDimensoes(tipo) { return DIMENSOES_CONSTRUCAO[tipo] || DIMENSOES_CONSTRUCAO.p; }
+
+// Tipos que ganham o indicador amarelo de porta no holograma (só as casas)
+const TIPOS_COM_PORTA = ['p', 'm', 'g'];
+// Tipos que encaixam numa grade de 2 em 2 (fáceis de alinhar em fileira/lado a lado)
+const TIPOS_GRID_DUPLO = ['piso', 'tocha', 'cama', 'cerca', 'muro'];
+
 function ativarHolograma(tipo) {
     if (hologramaVisual) cena.remove(hologramaVisual);
     hologramaVisual = new THREE.Group();
 
-    // Definimos as medidas da cama aqui (largura, profundidade e altura)
-    let largura = (tipo === 'fogueira' || tipo === 'piso') ? 2 : ((tipo === 'tocha') ? 0.4 : ((tipo === 'cama') ? 1.4 : ((tipo === 'g') ? 14 : 7)));
-    let profundidade = (tipo === 'fogueira' || tipo === 'piso') ? 2 : ((tipo === 'tocha') ? 0.4 : ((tipo === 'cama') ? 2.2 : 6));
-    let altura = (tipo === 'fogueira') ? 1 : ((tipo === 'piso') ? 0.1 : ((tipo === 'tocha') ? 1.5 : ((tipo === 'cama') ? 0.6 : ((tipo === 'p') ? 4 : 8))));
+    // Medidas vêm da tabela central (facilita adicionar novos tipos de construção)
+    const { largura, profundidade, altura } = obterDimensoes(tipo);
 
     let malhaPrevia = new THREE.Mesh(
         new THREE.BoxGeometry(largura, altura, profundidade),
@@ -760,8 +930,8 @@ function ativarHolograma(tipo) {
     malhaPrevia.position.y = altura / 2;
     hologramaVisual.add(malhaPrevia);
 
-    // Adicionamos o "tipo !== 'cama'" para que a cama não ganhe o indicador amarelo de porta
-    if (tipo !== 'fogueira' && tipo !== 'piso' && tipo !== 'tocha' && tipo !== 'cama') {
+    // Só as casas (p/m/g) ganham o indicador amarelo de porta
+    if (TIPOS_COM_PORTA.includes(tipo)) {
         let indicadorPorta = new THREE.Mesh(
             new THREE.BoxGeometry(1.6, 2.8, 0.4),
             new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.7 })
@@ -802,6 +972,8 @@ function construirCasaDetalhada(tipo, posX, posY, posZ, rotacaoY) {
         casa.add(grp);
     }
 
+    let portaCriada = null; // NOVO: guarda a porta desta casa para ligar à colisão do vão
+
     if (tipo === 'g') {
         const piso1 = new THREE.Mesh(new THREE.BoxGeometry(w, 0.4, d), matPisoGlobal);
         piso1.position.y = 0.2; piso1.receiveShadow = true; casa.add(piso1);
@@ -828,7 +1000,7 @@ function construirCasaDetalhada(tipo, posX, posY, posZ, rotacaoY) {
         pFD.position.set(1.375, 2, 2.85); casa.add(pFD);
         const vPorta = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.2, eGrossa), matTroncoGlobal);
         vPorta.position.set(0, 3.4, 2.85); casa.add(vPorta);
-        gerarPorta(-0.75, 0.2, 2.85, casa);
+        portaCriada = gerarPorta(-0.75, 0.2, 2.85, casa);
 
         const pTras1E = new THREE.Mesh(new THREE.BoxGeometry(5, 4, eGrossa), matTroncoGlobal);
         pTras1E.position.set(-4.5, 2, -2.85); casa.add(pTras1E);
@@ -886,7 +1058,7 @@ function construirCasaDetalhada(tipo, posX, posY, posZ, rotacaoY) {
         const vPorta = new THREE.Mesh(new THREE.BoxGeometry(1.5, hTotalMuros - 2.8, eGrossa), matTroncoGlobal);
         vPorta.position.set(0, 2.8 + (hTotalMuros - 2.8) / 2, d / 2 - eGrossa / 2); casa.add(vPorta);
 
-        gerarPorta(-0.75, 0.2, d / 2 - eGrossa / 2, casa);
+        portaCriada = gerarPorta(-0.75, 0.2, d / 2 - eGrossa / 2, casa);
 
         if (tipo === 'm') {
             let offsetZ = -d / 2 + 1.0;
@@ -907,7 +1079,8 @@ function construirCasaDetalhada(tipo, posX, posY, posZ, rotacaoY) {
     objetosRaycast.push(casa);
 
     const infoCasa = {
-        isCasaConstruida: true, x: posX, y: posY, z: posZ, w: w, d: d, rot: rotacaoY, topoY: posY + (andares * 4)
+        isCasaConstruida: true, x: posX, y: posY, z: posZ, w: w, d: d, rot: rotacaoY, topoY: posY + (andares * 4),
+        porta: portaCriada // NOVO: usado na colisão pra saber se a porta está aberta ou fechada
     };
     objetosMundo.push(infoCasa);
 
@@ -1068,6 +1241,189 @@ function criarModeloCama() {
     return grupoCama;
 }
 
+// ============================================================
+// MODELOS 3D: DELIMITAÇÃO (CERCA E MURO)
+// ============================================================
+function construirCercaFisica(posX, posY, posZ, rotacaoY) {
+    const grupo = new THREE.Group();
+    const matMadeira = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+
+    // Dois postes verticais nas pontas do segmento
+    [-0.9, 0.9].forEach(px => {
+        const poste = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.3, 0.12), matMadeira);
+        poste.position.set(px, 0.65, 0);
+        poste.castShadow = true;
+        grupo.add(poste);
+    });
+
+    // Duas ripas horizontais ligando os postes
+    [0.45, 1.0].forEach(py => {
+        const ripa = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.12, 0.06), matMadeira);
+        ripa.position.set(0, py, 0);
+        ripa.castShadow = true;
+        grupo.add(ripa);
+    });
+
+    grupo.position.set(posX, posY, posZ);
+    grupo.rotation.y = rotacaoY;
+    cena.add(grupo);
+    objetosRaycast.push(grupo);
+    return grupo;
+}
+
+function construirMuroFisica(posX, posY, posZ, rotacaoY) {
+    const matPedra = new THREE.MeshStandardMaterial({ color: 0x7d7d7d, roughness: 1.0 });
+    const muro = new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.8, 0.35), matPedra);
+    muro.position.set(posX, posY + 0.9, posZ);
+    muro.rotation.y = rotacaoY;
+    muro.castShadow = true;
+    muro.receiveShadow = true;
+    cena.add(muro);
+    objetosRaycast.push(muro);
+    return muro;
+}
+
+// ============================================================
+// MODELOS 3D: MÓVEIS INTERNOS (MESA, CADEIRA, BAÚ, LAREIRA)
+// ============================================================
+function criarModeloMesa() {
+    const grupo = new THREE.Group();
+    const matMadeira = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.8 });
+
+    const tampo = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.08, 0.8), matMadeira);
+    tampo.position.y = 0.72;
+    tampo.castShadow = true; tampo.receiveShadow = true;
+    grupo.add(tampo);
+
+    [[-0.55, -0.32], [0.55, -0.32], [-0.55, 0.32], [0.55, 0.32]].forEach(([px, pz]) => {
+        const perna = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.7, 0.08), matMadeira);
+        perna.position.set(px, 0.35, pz);
+        perna.castShadow = true;
+        grupo.add(perna);
+    });
+
+    return grupo;
+}
+
+function criarModeloCadeira() {
+    const grupo = new THREE.Group();
+    const matMadeira = new THREE.MeshStandardMaterial({ color: 0x6b4226, roughness: 0.85 });
+
+    const assento = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.07, 0.5), matMadeira);
+    assento.position.y = 0.45;
+    assento.castShadow = true;
+    grupo.add(assento);
+
+    const encosto = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.07), matMadeira);
+    encosto.position.set(0, 0.7, -0.22);
+    encosto.castShadow = true;
+    grupo.add(encosto);
+
+    [[-0.2, -0.2], [0.2, -0.2], [-0.2, 0.2], [0.2, 0.2]].forEach(([px, pz]) => {
+        const perna = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.45, 0.06), matMadeira);
+        perna.position.set(px, 0.22, pz);
+        perna.castShadow = true;
+        grupo.add(perna);
+    });
+
+    return grupo;
+}
+
+function criarModeloBau() {
+    const grupo = new THREE.Group();
+    const matMadeira = new THREE.MeshStandardMaterial({ color: 0x6b4226, roughness: 0.8 });
+    const matMetal = new THREE.MeshStandardMaterial({ color: 0x3f3f3f, metalness: 0.4, roughness: 0.5 });
+
+    const corpo = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.5, 0.6), matMadeira);
+    corpo.position.y = 0.25;
+    corpo.castShadow = true;
+    grupo.add(corpo);
+
+    const tampa = new THREE.Mesh(new THREE.BoxGeometry(1.02, 0.14, 0.62), matMadeira);
+    tampa.position.y = 0.57;
+    tampa.castShadow = true;
+    grupo.add(tampa);
+
+    const faixaFrente = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 0.62), matMetal);
+    faixaFrente.position.set(0, 0.25, 0);
+    grupo.add(faixaFrente);
+
+    const fechadura = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.05), matMetal);
+    fechadura.position.set(0, 0.35, 0.32);
+    grupo.add(fechadura);
+
+    return grupo;
+}
+
+function construirLareiraFisica(posX, posY, posZ, rotacaoY) {
+    const grupo = new THREE.Group();
+    const matPedra = new THREE.MeshStandardMaterial({ color: 0x6e6e6e, roughness: 0.9 });
+
+    // Base
+    const base = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.3, 0.7), matPedra);
+    base.position.y = 0.15;
+    base.castShadow = true; base.receiveShadow = true;
+    grupo.add(base);
+
+    // Parede de trás e laterais, formando um "U" que contém o fogo
+    const paredeTras = new THREE.Mesh(new THREE.BoxGeometry(1.7, 1.3, 0.15), matPedra);
+    paredeTras.position.set(0, 0.95, -0.28);
+    paredeTras.castShadow = true;
+    grupo.add(paredeTras);
+
+    [-0.72, 0.72].forEach(px => {
+        const lateral = new THREE.Mesh(new THREE.BoxGeometry(0.24, 1.3, 0.7), matPedra);
+        lateral.position.set(px, 0.95, 0);
+        lateral.castShadow = true;
+        grupo.add(lateral);
+    });
+
+    // Viga/moldura no topo (estilo mantel de lareira)
+    const moldura = new THREE.Mesh(new THREE.BoxGeometry(1.85, 0.15, 0.8), matPedra);
+    moldura.position.y = 1.65;
+    moldura.castShadow = true;
+    grupo.add(moldura);
+
+    grupo.position.set(posX, posY, posZ);
+    grupo.rotation.y = rotacaoY;
+    cena.add(grupo);
+    objetosRaycast.push(grupo);
+
+    // Fogo contido dentro da lareira: mesma lógica de luz + partículas da fogueira,
+    // mas em coordenadas de mundo (não do grupo) porque o loop de animação em
+    // listaFogueirasDinamicas espera posições absolutas.
+    const luzFogo = new THREE.PointLight(0xff7700, 1.8, 8);
+    luzFogo.position.set(posX, posY + 0.5, posZ);
+    cena.add(luzFogo);
+
+    const countPart = 20;
+    const geoPart = new THREE.BufferGeometry();
+    const posPart = new Float32Array(countPart * 3);
+    const dadosPart = [];
+    for (let i = 0; i < countPart; i++) {
+        posPart[i * 3] = posX + (Math.random() - 0.5) * 0.4;
+        posPart[i * 3 + 1] = posY + 0.3 + Math.random() * 0.8;
+        posPart[i * 3 + 2] = posZ + (Math.random() - 0.5) * 0.3;
+        dadosPart.push({ vY: Math.random() * 1.2 + 0.8, vX: (Math.random() - 0.5) * 0.15, vZ: (Math.random() - 0.5) * 0.15 });
+    }
+    geoPart.setAttribute('position', new THREE.BufferAttribute(posPart, 3));
+    const sistemaFogo = new THREE.Points(geoPart, new THREE.PointsMaterial({
+        color: 0xff4500, size: 0.2, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending
+    }));
+    cena.add(sistemaFogo);
+
+    listaFogueirasDinamicas.push({
+        luz: luzFogo,
+        sistemaParticulas: sistemaFogo,
+        dadosParticulas: dadosPart,
+        xOriginal: posX,
+        yOriginal: posY,
+        zOriginal: posZ
+    });
+
+    return grupo;
+}
+
 function executarConstrucaoReal() {
     if (!hologramaVisual || !hologramaVisual.visible) return;
     const posAlvo = hologramaVisual.position.clone();
@@ -1075,9 +1431,8 @@ function executarConstrucaoReal() {
 
     const posJ = controles.getObject().position;
 
-    // ✨ ATUALIZADO: Adicionámos as dimensões da cama (1.4 de largura, 2.2 de profundidade)
-    const larguraEspaco = (tipoCasaParaConstruir === 'g') ? 14 : ((tipoCasaParaConstruir === 'fogueira' || tipoCasaParaConstruir === 'piso') ? 2 : ((tipoCasaParaConstruir === 'tocha') ? 0.4 : ((tipoCasaParaConstruir === 'cama') ? 1.4 : 7)));
-    const profEspaco = (tipoCasaParaConstruir === 'fogueira' || tipoCasaParaConstruir === 'piso') ? 2 : ((tipoCasaParaConstruir === 'tocha') ? 0.4 : ((tipoCasaParaConstruir === 'cama') ? 2.2 : 6));
+    // Espaço livre necessário vem da mesma tabela central usada no holograma
+    const { largura: larguraEspaco, profundidade: profEspaco } = obterDimensoes(tipoCasaParaConstruir);
 
     if (Math.abs(posJ.y - posAlvo.y) < 2) {
         if (Math.abs(posJ.x - posAlvo.x) < larguraEspaco / 2 + 0.5 && Math.abs(posJ.z - posAlvo.z) < profEspaco / 2 + 0.5) {
@@ -1110,6 +1465,33 @@ function executarConstrucaoReal() {
             topoY: posAlvo.y + 0.6 // Altura de colisão
         };
         objetosMundo.push(infoColisaoCama);
+    } else if (tipoCasaParaConstruir === 'cerca') {
+        construirCercaFisica(posAlvo.x, posAlvo.y, posAlvo.z, anguloRotacaoHolograma);
+        objetosMundo.push({ x: posAlvo.x, z: posAlvo.z, raio: 1.0, topoY: posAlvo.y + 1.3 });
+    } else if (tipoCasaParaConstruir === 'muro') {
+        construirMuroFisica(posAlvo.x, posAlvo.y, posAlvo.z, anguloRotacaoHolograma);
+        objetosMundo.push({ x: posAlvo.x, z: posAlvo.z, raio: 1.05, topoY: posAlvo.y + 1.8 });
+    } else if (tipoCasaParaConstruir === 'mesa') {
+        const mesaReal = criarModeloMesa();
+        mesaReal.position.set(posAlvo.x, posAlvo.y, posAlvo.z);
+        mesaReal.rotation.y = anguloRotacaoHolograma;
+        cena.add(mesaReal); objetosRaycast.push(mesaReal);
+        objetosMundo.push({ x: posAlvo.x, z: posAlvo.z, raio: 0.7, topoY: posAlvo.y + 0.75 });
+    } else if (tipoCasaParaConstruir === 'cadeira') {
+        const cadeiraReal = criarModeloCadeira();
+        cadeiraReal.position.set(posAlvo.x, posAlvo.y, posAlvo.z);
+        cadeiraReal.rotation.y = anguloRotacaoHolograma;
+        cena.add(cadeiraReal); objetosRaycast.push(cadeiraReal);
+        objetosMundo.push({ x: posAlvo.x, z: posAlvo.z, raio: 0.35, topoY: posAlvo.y + 0.9 });
+    } else if (tipoCasaParaConstruir === 'bau') {
+        const bauReal = criarModeloBau();
+        bauReal.position.set(posAlvo.x, posAlvo.y, posAlvo.z);
+        bauReal.rotation.y = anguloRotacaoHolograma;
+        cena.add(bauReal); objetosRaycast.push(bauReal);
+        objetosMundo.push({ x: posAlvo.x, z: posAlvo.z, raio: 0.55, topoY: posAlvo.y + 0.7 });
+    } else if (tipoCasaParaConstruir === 'lareira') {
+        construirLareiraFisica(posAlvo.x, posAlvo.y, posAlvo.z, anguloRotacaoHolograma);
+        objetosMundo.push({ x: posAlvo.x, z: posAlvo.z, raio: 0.9, topoY: posAlvo.y + 1.7 });
     } else {
         // Se não for nenhum dos anteriores, constrói uma casa (p, m ou g)
         construirCasaDetalhada(tipoCasaParaConstruir, posAlvo.x, posAlvo.y, posAlvo.z, anguloRotacaoHolograma);
@@ -1130,6 +1512,15 @@ const relogio = new THREE.Clock(); let tempoCiclo = 0.5;
 
 function animar() {
     requestAnimationFrame(animar); const delta = Math.min(relogio.getDelta(), 0.1);
+
+    // Suaviza a câmera do celular em direção ao alvo (em vez de saltar direto pra
+    // posição do dedo). Fórmula independente de FPS: funciona igual em 30 e 120fps.
+    if (cameraYawAlvo !== null) {
+        const fatorSuavizacao = 1 - Math.exp(-VELOCIDADE_SUAVIZACAO_CAMERA_TOUCH * delta);
+        camera.rotation.y = THREE.MathUtils.lerp(camera.rotation.y, cameraYawAlvo, fatorSuavizacao);
+        camera.rotation.x = THREE.MathUtils.lerp(camera.rotation.x, cameraPitchAlvo, fatorSuavizacao);
+        camera.rotation.order = "YXZ";
+    }
 
 
 
@@ -1420,7 +1811,9 @@ function animar() {
                     let naParedeFrontal = localZ > (halfD - espessuraParede - 0.2); 
 
                     if (naPortaX && naParedeFrontal) {
-                        colidiu = false; 
+                        // NOVO: só atravessa livremente se a casa tiver porta E ela estiver aberta.
+                        // Porta fechada (ou casa sem porta associada) bloqueia a passagem, como uma parede.
+                        colidiu = !(obj.porta && obj.porta.userData.aberta);
                     } else {
                         colidiu = true; 
                     }
@@ -1428,7 +1821,10 @@ function animar() {
             }
         }
         else if (obj.isBox) { 
-            if (posJ.x > obj.minX && posJ.x < obj.maxX && posJ.z > obj.minZ && posJ.z < obj.maxZ) colidiu = true; 
+            if (posJ.x > obj.minX && posJ.x < obj.maxX && posJ.z > obj.minZ && posJ.z < obj.maxZ) {
+                // NOVO: se essa caixa representa o vão de uma porta, só bloqueia quando ela está fechada
+                colidiu = obj.porta ? !obj.porta.userData.aberta : true;
+            }
         } 
         else { 
             const dx = posJ.x - obj.x, dz = posJ.z - obj.z; 
@@ -1546,6 +1942,9 @@ window.addEventListener('touchstart', (e) => {
             touchOlharId = touch.identifier;
             touchOlharAnteriorX = touch.clientX;
             touchOlharAnteriorY = touch.clientY;
+            // Sincroniza o alvo com a rotação real, senão a câmera "puxaria" de
+            // onde parou o último drag pra posição atual assim que suavizar.
+            if (cameraYawAlvo === null) { cameraYawAlvo = camera.rotation.y; cameraPitchAlvo = camera.rotation.x; }
         }
     }
 });
@@ -1558,14 +1957,15 @@ window.addEventListener('touchmove', (e) => {
             const deltaX = touch.clientX - touchOlharAnteriorX;
             const deltaY = touch.clientY - touchOlharAnteriorY;
 
-            // Normalizado pela largura da tela (ver comentário no topo do bloco)
+            // Normalizado pela largura da tela (ver comentário no topo do bloco).
+            // Só move o ALVO aqui — quem realmente gira a câmera, suavemente,
+            // é o trecho no início da função animar().
             const sensibilidade = SENSIBILIDADE_CAMERA_TOUCH / window.innerWidth;
-            camera.rotation.y -= deltaX * sensibilidade;
-            camera.rotation.x -= deltaY * sensibilidade;
+            cameraYawAlvo -= deltaX * sensibilidade;
+            cameraPitchAlvo -= deltaY * sensibilidade;
 
             // Limita olhar muito para cima ou muito para baixo
-            camera.rotation.x = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, camera.rotation.x));
-            camera.rotation.order = "YXZ";
+            cameraPitchAlvo = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, cameraPitchAlvo));
 
             touchOlharAnteriorX = touch.clientX;
             touchOlharAnteriorY = touch.clientY;
@@ -1582,3 +1982,296 @@ const resetTouchOlhar = (e) => {
 };
 window.addEventListener('touchend', resetTouchOlhar);
 window.addEventListener('touchcancel', resetTouchOlhar);
+// ============================================================
+// ÍCONES DAS CASAS (CANVAS) NA MESA DE CRAFTING
+// ============================================================
+// Desenha um ícone de casinha 2D dentro de um <canvas>, com diferenças
+// visuais reais entre pequena, média e grande (tamanho, nº de janelas,
+// andares e chaminé) — em vez de usar o emoji 🏡 genérico para as três.
+function desenharIconeCasa(canvas, tipo) {
+    if (!canvas || !canvas.getContext) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    const configs = {
+        p: { escala: 0.80, janelas: 1, andares: 1, chamine: false, corTelhado: '#f87171' },
+        m: { escala: 1.00, janelas: 2, andares: 1, chamine: true, corTelhado: '#ef4444' },
+        g: { escala: 1.18, janelas: 3, andares: 2, chamine: true, corTelhado: '#dc2626' }
+    };
+    const cfg = configs[tipo] || configs.p;
+
+    const baseY = H - 5;
+    const larguraParede = 20 * cfg.escala;
+    const alturaParede = (cfg.andares === 2 ? 19 : 12) * cfg.escala;
+    const alturaTelhado = 11 * cfg.escala;
+    const centroX = W / 2;
+
+    const paredeEsq = centroX - larguraParede / 2;
+    const paredeDir = centroX + larguraParede / 2;
+    const paredeTopoY = baseY - alturaParede;
+
+    ctx.beginPath();
+    ctx.ellipse(centroX, baseY + 1.5, larguraParede * 0.6, 2, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fill();
+
+    ctx.fillStyle = cfg.andares === 2 ? '#e7c39a' : '#d9a66c';
+    ctx.strokeStyle = '#5c3a21';
+    ctx.lineWidth = 1.2;
+    ctx.fillRect(paredeEsq, paredeTopoY, larguraParede, alturaParede);
+    ctx.strokeRect(paredeEsq, paredeTopoY, larguraParede, alturaParede);
+
+    if (cfg.andares === 2) {
+        const meioY = paredeTopoY + alturaParede * 0.48;
+        ctx.beginPath();
+        ctx.moveTo(paredeEsq, meioY);
+        ctx.lineTo(paredeDir, meioY);
+        ctx.strokeStyle = 'rgba(92,58,33,0.55)';
+        ctx.stroke();
+        ctx.strokeStyle = '#5c3a21';
+    }
+
+    const beiral = 3 * cfg.escala;
+    ctx.beginPath();
+    ctx.moveTo(paredeEsq - beiral, paredeTopoY);
+    ctx.lineTo(centroX, paredeTopoY - alturaTelhado);
+    ctx.lineTo(paredeDir + beiral, paredeTopoY);
+    ctx.closePath();
+    ctx.fillStyle = cfg.corTelhado;
+    ctx.fill();
+    ctx.strokeStyle = '#5c3a21';
+    ctx.stroke();
+
+    if (cfg.chamine) {
+        const chamineLargura = 3.2 * cfg.escala;
+        const chamineX = centroX + larguraParede * 0.20;
+        const chamineAltura = alturaTelhado * 0.6;
+        const chamineTopoY = paredeTopoY - chamineAltura * 0.65;
+        ctx.fillStyle = '#7c5843';
+        ctx.fillRect(chamineX, chamineTopoY, chamineLargura, chamineAltura);
+        ctx.strokeRect(chamineX, chamineTopoY, chamineLargura, chamineAltura);
+
+        if (tipo === 'g') {
+            ctx.fillStyle = 'rgba(220,220,220,0.65)';
+            ctx.beginPath(); ctx.arc(chamineX + chamineLargura / 2, chamineTopoY - 3, 1.8, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(chamineX + chamineLargura / 2 + 2.2, chamineTopoY - 6.5, 2.3, 0, Math.PI * 2); ctx.fill();
+        }
+    }
+
+    const portaLargura = 4.5 * cfg.escala;
+    const portaAltura = alturaParede * 0.5;
+    ctx.fillStyle = '#5c3a21';
+    ctx.fillRect(centroX - portaLargura / 2, baseY - portaAltura, portaLargura, portaAltura);
+    ctx.fillStyle = '#fbbf24';
+    ctx.beginPath();
+    ctx.arc(centroX + portaLargura / 2 - 1, baseY - portaAltura / 2, 0.6, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#bde0fe';
+    ctx.strokeStyle = '#5c3a21';
+    ctx.lineWidth = 1;
+    const janelaTam = 3.6 * cfg.escala;
+    const janelaYBase = paredeTopoY + alturaParede * 0.20;
+
+    function desenharJanela(fracaoX, offsetY) {
+        const jx = paredeEsq + larguraParede * fracaoX - janelaTam / 2;
+        const jy = janelaYBase + offsetY;
+        ctx.fillRect(jx, jy, janelaTam, janelaTam);
+        ctx.strokeRect(jx, jy, janelaTam, janelaTam);
+        ctx.beginPath();
+        ctx.moveTo(jx + janelaTam / 2, jy);
+        ctx.lineTo(jx + janelaTam / 2, jy + janelaTam);
+        ctx.moveTo(jx, jy + janelaTam / 2);
+        ctx.lineTo(jx + janelaTam, jy + janelaTam / 2);
+        ctx.stroke();
+    }
+
+    if (cfg.janelas === 1) {
+        desenharJanela(0.68, 0);
+    } else if (cfg.janelas === 2) {
+        desenharJanela(0.24, 0);
+        desenharJanela(0.76, 0);
+    } else {
+        desenharJanela(0.22, alturaParede * 0.40);
+        desenharJanela(0.78, alturaParede * 0.40);
+        desenharJanela(0.5, -alturaParede * 0.04);
+    }
+}
+
+// ============================================================
+// ÍCONES DOS NOVOS GRUPOS: DELIMITAÇÃO E MÓVEIS INTERNOS
+// ============================================================
+// Mesmo espírito das casas: desenho vetorial simples em canvas, escalado por
+// frações de W/H (funciona tanto no ícone grande da mesa de trabalho de 44x44
+// quanto no ícone pequeno da hotbar de 32x32).
+function desenharIconeCerca(canvas) {
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const corMadeira = '#b98a54', corContorno = '#5c3a21';
+    ctx.strokeStyle = corContorno; ctx.lineWidth = Math.max(1, W * 0.045);
+
+    // Ripas horizontais
+    ctx.fillStyle = corMadeira;
+    [H * 0.42, H * 0.66].forEach(ry => {
+        ctx.fillRect(W * 0.10, ry, W * 0.80, H * 0.08);
+        ctx.strokeRect(W * 0.10, ry, W * 0.80, H * 0.08);
+    });
+
+    // Estacas verticais com ponta triangular
+    const baseY = H * 0.90, topoY = H * 0.18, largEstaca = W * 0.13;
+    [W * 0.22, W * 0.5, W * 0.78].forEach(px => {
+        ctx.beginPath();
+        ctx.moveTo(px - largEstaca / 2, baseY);
+        ctx.lineTo(px - largEstaca / 2, topoY + H * 0.10);
+        ctx.lineTo(px, topoY);
+        ctx.lineTo(px + largEstaca / 2, topoY + H * 0.10);
+        ctx.lineTo(px + largEstaca / 2, baseY);
+        ctx.closePath();
+        ctx.fillStyle = corMadeira;
+        ctx.fill();
+        ctx.stroke();
+    });
+}
+
+function desenharIconeMuro(canvas) {
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const margemX = W * 0.08, margemY = H * 0.15;
+    const larguraTotal = W - margemX * 2, alturaTotal = H - margemY * 2;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(margemX, margemY, larguraTotal, alturaTotal);
+    ctx.clip();
+    const linhas = 3, alturaLinha = alturaTotal / linhas, numBlocos = 3, largBloco = larguraTotal / numBlocos;
+    ctx.strokeStyle = '#374151'; ctx.lineWidth = Math.max(1, W * 0.03);
+    for (let l = 0; l < linhas; l++) {
+        const y = margemY + l * alturaLinha;
+        const offset = (l % 2 === 0) ? 0 : -largBloco / 2;
+        for (let b = -1; b <= numBlocos; b++) {
+            const x = margemX + offset + b * largBloco;
+            ctx.fillStyle = (b + l) % 2 === 0 ? '#9ca3af' : '#818996';
+            ctx.fillRect(x, y, largBloco, alturaLinha);
+            ctx.strokeRect(x, y, largBloco, alturaLinha);
+        }
+    }
+    ctx.restore();
+    ctx.strokeStyle = '#374151'; ctx.lineWidth = Math.max(1, W * 0.04);
+    ctx.strokeRect(margemX, margemY, larguraTotal, alturaTotal);
+}
+
+function desenharIconeMesa(canvas) {
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const corMadeira = '#b98a54', corContorno = '#5c3a21';
+    ctx.fillStyle = corMadeira; ctx.strokeStyle = corContorno; ctx.lineWidth = Math.max(1, W * 0.04);
+
+    const tampoX = W * 0.12, tampoY = H * 0.32, tampoW = W * 0.76, tampoH = H * 0.12;
+    ctx.fillRect(tampoX, tampoY, tampoW, tampoH);
+    ctx.strokeRect(tampoX, tampoY, tampoW, tampoH);
+
+    [tampoX + tampoW * 0.06, tampoX + tampoW * 0.82].forEach(px => {
+        ctx.fillRect(px, tampoY + tampoH, tampoW * 0.12, H * 0.42);
+        ctx.strokeRect(px, tampoY + tampoH, tampoW * 0.12, H * 0.42);
+    });
+}
+
+function desenharIconeCadeira(canvas) {
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const corMadeira = '#8b5e34', corContorno = '#5c3a21';
+    ctx.fillStyle = corMadeira; ctx.strokeStyle = corContorno; ctx.lineWidth = Math.max(1, W * 0.04);
+
+    ctx.fillRect(W * 0.28, H * 0.14, W * 0.10, H * 0.40);
+    ctx.strokeRect(W * 0.28, H * 0.14, W * 0.10, H * 0.40);
+
+    ctx.fillRect(W * 0.24, H * 0.48, W * 0.50, H * 0.10);
+    ctx.strokeRect(W * 0.24, H * 0.48, W * 0.50, H * 0.10);
+
+    [W * 0.28, W * 0.66].forEach(px => {
+        ctx.fillRect(px, H * 0.58, W * 0.06, H * 0.32);
+        ctx.strokeRect(px, H * 0.58, W * 0.06, H * 0.32);
+    });
+}
+
+function desenharIconeBau(canvas) {
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const corMadeira = '#8b5e34', corContorno = '#5c3a21', corMetal = '#9ca3af';
+    ctx.strokeStyle = corContorno; ctx.lineWidth = Math.max(1, W * 0.04);
+
+    ctx.fillStyle = corMadeira;
+    ctx.fillRect(W * 0.16, H * 0.46, W * 0.68, H * 0.36);
+    ctx.strokeRect(W * 0.16, H * 0.46, W * 0.68, H * 0.36);
+
+    ctx.beginPath();
+    ctx.moveTo(W * 0.16, H * 0.46);
+    ctx.quadraticCurveTo(W * 0.5, H * 0.16, W * 0.84, H * 0.46);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = corMetal;
+    ctx.fillRect(W * 0.47, H * 0.20, W * 0.06, H * 0.62);
+    ctx.fillRect(W * 0.44, H * 0.5, W * 0.12, H * 0.1);
+    ctx.strokeRect(W * 0.44, H * 0.5, W * 0.12, H * 0.1);
+}
+
+function desenharIconeLareira(canvas) {
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const corPedra = '#8a8f98', corContorno = '#374151';
+    ctx.strokeStyle = corContorno; ctx.lineWidth = Math.max(1, W * 0.04);
+
+    ctx.fillStyle = corPedra;
+    ctx.fillRect(W * 0.10, H * 0.20, W * 0.80, H * 0.66);
+    ctx.strokeRect(W * 0.10, H * 0.20, W * 0.80, H * 0.66);
+
+    ctx.fillStyle = '#1f2937';
+    ctx.fillRect(W * 0.24, H * 0.40, W * 0.52, H * 0.42);
+
+    ctx.fillStyle = '#f59e0b';
+    ctx.beginPath();
+    ctx.moveTo(W * 0.5, H * 0.42);
+    ctx.quadraticCurveTo(W * 0.62, H * 0.58, W * 0.5, H * 0.80);
+    ctx.quadraticCurveTo(W * 0.38, H * 0.58, W * 0.5, H * 0.42);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = '#fde047';
+    ctx.beginPath();
+    ctx.moveTo(W * 0.5, H * 0.52);
+    ctx.quadraticCurveTo(W * 0.56, H * 0.62, W * 0.5, H * 0.74);
+    ctx.quadraticCurveTo(W * 0.44, H * 0.62, W * 0.5, H * 0.52);
+    ctx.closePath();
+    ctx.fill();
+}
+
+function inicializarIconesDeCrafting() {
+    desenharIconeCasa(document.getElementById('canvas-casa-p'), 'p');
+    desenharIconeCasa(document.getElementById('canvas-casa-m'), 'm');
+    desenharIconeCasa(document.getElementById('canvas-casa-g'), 'g');
+
+    // Cada item novo desenha tanto no card grande da mesa de trabalho
+    // quanto no ícone pequeno da hotbar (mesmo desenho, escala diferente).
+    [
+        ['canvas-cerca', desenharIconeCerca],
+        ['canvas-muro', desenharIconeMuro],
+        ['canvas-mesa', desenharIconeMesa],
+        ['canvas-cadeira', desenharIconeCadeira],
+        ['canvas-bau', desenharIconeBau],
+        ['canvas-lareira', desenharIconeLareira]
+    ].forEach(([id, funcaoDesenho]) => {
+        const el = document.getElementById(id);
+        if (el) funcaoDesenho(el);
+    });
+}
+// O script está no final do <body>, então o HTML já existe — pode chamar direto.
+inicializarIconesDeCrafting();

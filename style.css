@@ -60,7 +60,8 @@ body {
    ========================================================= */
 #inventario-hud {
     position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
-    display: flex; gap: 8px; background: rgba(0,0,0,0.6);
+    display: flex; flex-wrap: wrap; justify-content: center; gap: 8px;
+    background: rgba(0,0,0,0.6); max-width: 96vw;
     padding: 8px; border-radius: 6px; border: 2px solid #374151; z-index: 10;
 }
 
@@ -102,27 +103,92 @@ body {
    ========================================================= */
 #menu-crafting {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    background: rgba(31, 41, 55, 0.95); color: white; padding: 30px;
-    border-radius: 8px; border: 3px solid #fbbf24; display: none; z-index: 30;
-    min-width: 320px; box-shadow: 0 0 30px rgba(0,0,0,0.8);
+    background: linear-gradient(180deg, rgba(31,41,55,0.97), rgba(15,20,30,0.98));
+    color: white; border-radius: 14px; border: 3px solid #fbbf24; display: none; z-index: 30;
+    width: min(94vw, 640px); max-height: 88vh; overflow-y: auto; box-sizing: border-box;
+    box-shadow: 0 0 40px rgba(0,0,0,0.85), 0 0 0 1px rgba(251,191,36,0.15) inset;
 }
 
-.opcao-craft {
+.crafting-header {
     display: flex; justify-content: space-between; align-items: center;
-    margin: 15px 0; background: rgba(0,0,0,0.3); padding: 10px; border-radius: 4px;
+    padding: 18px 22px 12px; border-bottom: 1px solid rgba(251,191,36,0.25);
+}
+.crafting-header h2 { margin: 0; font-size: 1.25rem; letter-spacing: 0.5px; }
+
+.btn-fechar-x {
+    background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.5); color: #fca5a5;
+    width: 30px; height: 30px; border-radius: 8px; font-size: 15px; font-weight: bold;
+    cursor: pointer; line-height: 1; transition: background 0.15s, transform 0.15s;
+    flex-shrink: 0;
+}
+.btn-fechar-x:hover { background: rgba(239,68,68,0.35); color: #fff; transform: scale(1.08); }
+
+.crafting-saldo { display: flex; gap: 10px; padding: 14px 22px 0; }
+.saldo-chip {
+    background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.12);
+    padding: 5px 12px; border-radius: 20px; font-size: 0.9rem; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 6px;
 }
 
-.opcao-craft button {
-    background: #22c55e; border: none; color: white; padding: 6px 12px;
-    border-radius: 4px; cursor: pointer; font-weight: bold;
+.crafting-abas { display: flex; gap: 8px; padding: 14px 22px 0; }
+.aba-craft {
+    flex: 1; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12);
+    color: #cbd5e1; padding: 9px 10px; border-radius: 9px; cursor: pointer;
+    font-weight: 700; font-size: 0.85rem; transition: all 0.15s;
+}
+.aba-craft:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.aba-craft.ativa {
+    background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #1f2937; border-color: #fbbf24;
+    box-shadow: 0 4px 12px rgba(251,191,36,0.35);
 }
 
-.opcao-craft button:hover { background: #16a34a; }
-
-#btn-fechar-crafting {
-    width: 100%; background: #ef4444; border: none; color: white;
-    padding: 8px; border-radius: 4px; font-weight: bold; cursor: pointer;
+.crafting-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+    gap: 14px; padding: 16px 22px 22px;
 }
+
+.card-craft {
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px; padding: 14px 10px; display: flex; flex-direction: column;
+    align-items: center; text-align: center; gap: 8px;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.card-craft:hover {
+    transform: translateY(-3px); border-color: rgba(251,191,36,0.5);
+    background: rgba(255,255,255,0.07); box-shadow: 0 8px 18px rgba(0,0,0,0.4);
+}
+
+.card-icone {
+    width: 52px; height: 52px; display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.25); border-radius: 10px;
+}
+.icone-canvas { display: block; flex-shrink: 0; }
+.icone-craft-img { width: 32px; height: 32px; object-fit: contain; flex-shrink: 0; }
+.icone-emoji { font-size: 28px; }
+
+.card-nome { font-size: 0.86rem; font-weight: 700; color: #f3f4f6; }
+
+.card-custos { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.custo-chip {
+    font-size: 0.76rem; background: rgba(0,0,0,0.3); padding: 3px 8px;
+    border-radius: 12px; font-weight: 600; color: #d1d5db; transition: color 0.15s, background 0.15s;
+}
+.custo-chip.falta { color: #fca5a5; background: rgba(239,68,68,0.18); }
+
+.card-craft button {
+    width: 100%; background: linear-gradient(135deg, #22c55e, #16a34a); border: none; color: white;
+    padding: 8px 10px; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 0.8rem;
+    transition: transform 0.15s, background 0.15s;
+}
+.card-craft button:hover { transform: scale(1.03); background: linear-gradient(135deg, #16a34a, #15803d); }
+.card-craft button:active { transform: scale(0.97); }
+
+.card-craft.indisponivel { opacity: 0.55; }
+.card-craft.indisponivel:hover { transform: none; box-shadow: none; border-color: rgba(255,255,255,0.1); }
+.card-craft.indisponivel button { background: #4b5563; cursor: not-allowed; }
+.card-craft.indisponivel button:hover { transform: none; background: #4b5563; }
+
+.crafting-footer { text-align: center; font-size: 0.75rem; color: #9ca3af; padding: 0 22px 18px; }
 
 #mochila-container {
     position: absolute;
