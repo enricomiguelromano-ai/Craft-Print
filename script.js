@@ -27,17 +27,73 @@ let inventario = {
     planta_cadeira: 0,
     planta_bau: 0,
     planta_lareira: 0,
+    planta_carro: 0,
+    planta_tv: 0,
     ferro: 0,
     cobre: 0,
     ouro: 0
 };
 
+// --- SISTEMA DE ECONOMIA (VENDA DE RECURSOS NO COMPUTADOR) ---
+// Preço por unidade de cada recurso extraído. Usado pela escrivaninha/PC da cabana.
+const PRECOS_RECURSOS = {
+    madeira: 300,
+    pedra: 350,
+    ferro: 1100,
+    cobre: 800,
+    ouro: 2000
+};
+const NOMES_RECURSOS = {
+    madeira: 'Madeira',
+    pedra: 'Pedra',
+    ferro: 'Ferro',
+    cobre: 'Cobre',
+    ouro: 'Ouro'
+};
+
+// --- SISTEMA DE COMPRA DE PRODUTOS (COMPUTADOR, ABA "COMPRAR") ---
+// Cada produto vira 1 unidade de "planta_<tipo>" no inventário quando comprado,
+// e é posicionado no mundo pelo mesmo sistema de holograma usado pelas plantas
+// de construção (ver DIMENSOES_CONSTRUCAO / executarConstrucaoReal).
+const PRODUTOS_LOJA = {
+    carro: { nome: 'Carro', preco: 20000 },
+    tv: { nome: 'Televisão', preco: 2000 }
+};
+
+// ------------------------------------------------------------------
+// MINIGAMES DA TV — 5 jogos leves, 100% autocontidos (sem precisar de
+// nenhum arquivo externo). "iniciar" recebe o elemento container onde o
+// jogo deve desenhar sua interface, e DEVE retornar uma função "parar"
+// que cancela intervalos/listeners quando o jogador fecha a TV (as
+// implementações de cada "iniciar" ficam mais abaixo, perto de
+// abrirMenuTV). Pra adicionar um jogo novo, basta seguir esse mesmo
+// formato aqui e escrever a função correspondente.
+// ------------------------------------------------------------------
+const MINIGAMES = [
+    { titulo: 'Cobrinha', emoji: '🐍', descricao: 'Setas ou WASD', iniciar: (c) => iniciarJogoCobrinha(c) },
+    { titulo: 'Jogo da Velha', emoji: '❌⭕', descricao: '2 jogadores', iniciar: (c) => iniciarJogoVelha(c) },
+    { titulo: 'Jogo da Memória', emoji: '🧠', descricao: 'Ache os pares', iniciar: (c) => iniciarJogoMemoria(c) },
+    { titulo: 'Pong', emoji: '🏓', descricao: 'Mouse ou W/S', iniciar: (c) => iniciarJogoPong(c) },
+    { titulo: 'Reflexo', emoji: '⚡', descricao: 'Clique rápido, 30s', iniciar: (c) => iniciarJogoReflexo(c) }
+];
+
+// Dinheiro acumulado pelo jogador (mostrado no HUD do canto inferior esquerdo).
+let dinheiroJogador = 0;
+
+// "Carrinho" de venda: recursos que o jogador já reservou pra vender, mas que
+// só somam ao dinheiro de verdade quando ele clica em "Fechar Venda". Se o
+// jogador sair do computador sem fechar a venda, tudo volta pra mochila.
+let carrinhoVenda = { madeira: 0, pedra: 0, ferro: 0, cobre: 0, ouro: 0 };
+
 // --- SISTEMA DE HOTBAR DINÂMICA (10 espaços: teclas 1 a 9, depois 0) ---
 // Cada item ganha seu número automaticamente na primeira vez que o jogador o
 // possui (machado/picareta entram primeiro, pois já vêm no inventário inicial).
-// Uma vez atribuído, o número fica reservado para aquele item para sempre —
-// mesmo que a quantidade dele chegue a 0 e o slot suma da hotbar por um tempo,
-// ele volta a aparecer no MESMO número quando o jogador conseguir mais.
+// O número fica reservado ENQUANTO a quantidade for maior que 0. Assim que a
+// quantidade desse item cai pra 0 (usou tudo, vendeu, etc.), o espaço é
+// liberado (ver liberarSlotsVazios() em atualizarUIAktiv) e pode ser ocupado
+// por QUALQUER outro tipo de item — mesmo um que o jogador nunca teve antes.
+// Ou seja, "cheio" agora significa 10 tipos diferentes em posse AGORA, não 10
+// tipos diferentes conquistados na vida do save.
 // Só entram nessa lista os itens "equipáveis" (ferramentas e plantas de
 // construção); madeira/pedra/ferro/cobre/ouro continuam só na mochila.
 const LIMITE_HOTBAR = 10;
@@ -58,21 +114,49 @@ const CONFIG_ITENS_HOTBAR = {
     planta_mesa: { icone: { tipo: 'canvas', valor: desenharIconeMesa } },
     planta_cadeira: { icone: { tipo: 'canvas', valor: desenharIconeCadeira } },
     planta_bau: { icone: { tipo: 'canvas', valor: desenharIconeBau } },
-    planta_lareira: { icone: { tipo: 'canvas', valor: desenharIconeLareira } }
+    planta_lareira: { icone: { tipo: 'canvas', valor: desenharIconeLareira } },
+    planta_carro: { icone: { tipo: 'emoji', valor: '🚗' }, rotulo: 'Carro' },
+    planta_tv: { icone: { tipo: 'emoji', valor: '📺' }, rotulo: 'TV' }
 };
 
 // Tenta reservar um número/posição na hotbar pro item (se ele ainda não tiver).
 // Devolve true se o item já tinha (ou conseguiu) um número; false se a hotbar
 // está cheia (10 itens diferentes) e esse item ainda não fazia parte dela.
-function registrarItemNaHotbar(itemChave) {
+//
+// CORREÇÃO (mensagem de "Inventário cheio" repetindo sem parar): antes essa
+// função avisava toda vez que era chamada e falhava — e ela era chamada de
+// dentro de atualizarUIAktiv() para TODOS os itens do inventário, toda vez
+// que a UI atualizava (a cada craft, construção, demolição etc.), mesmo pra
+// itens que já tinham falhado antes. Resultado: a mensagem reaparecia sem
+// parar, mesmo em ações que não tinham nada a ver com pegar um item novo.
+// Agora o aviso só é mostrado quando quem chamou pede explicitamente
+// (avisarSeCheio = true) — e isso só acontece no exato momento em que o
+// jogador tenta conseguir um tipo de item novo (ver craftarConstrucao).
+function registrarItemNaHotbar(itemChave, avisarSeCheio = false) {
     if (hotbar.includes(itemChave)) return true;
     const indiceLivre = hotbar.indexOf(null);
     if (indiceLivre === -1) {
-        mostrarNotificacao('Inventário cheio! Máximo de 10 itens diferentes.', '#ef4444');
+        if (avisarSeCheio) {
+            mostrarNotificacao('Inventário cheio! Máximo de 10 itens diferentes.', '#ef4444');
+        }
         return false;
     }
     hotbar[indiceLivre] = itemChave;
     return true;
+}
+
+// Libera da hotbar qualquer item cuja quantidade tenha chegado a 0, deixando
+// o espaço livre para QUALQUER tipo (já teve antes ou não). Chamada sempre
+// junto com registrarItemNaHotbar em atualizarUIAktiv(), antes de tentar
+// reservar espaço pra itens novos — assim um espaço que acabou de esvaziar já
+// pode ser reaproveitado na mesma atualização.
+function liberarSlotsVazios() {
+    for (let i = 0; i < hotbar.length; i++) {
+        const chave = hotbar[i];
+        if (chave && (!inventario[chave] || inventario[chave] <= 0)) {
+            hotbar[i] = null;
+        }
+    }
 }
 
 let itemAtivo = 'machado';
@@ -81,9 +165,53 @@ let tempoSegurandoClique = 0, estaMinando = false, arvoreSendoCortada = null, ro
 let modoConstrucaoAtivo = false, tipoCasaParaConstruir = null, hologramaVisual = null;
 let anguloRotacaoHolograma = 0;
 
+// --- SISTEMA DE DEMOLIÇÃO DE CONSTRUÇÕES ---
+// Cada construção colocada no mundo vira um "registro" aqui, guardando tudo
+// que foi criado junto com ela (meshes, colisores, escadas, portas, etc.) para
+// poder ser removido de uma vez só quando o jogador demolir.
+let construcoesColocadas = [];
+let construcaoOlhada = null, construcaoSendoDemolida = null;
+
+// Qual ferramenta demole qual tipo de construção (baseado no material que
+// predomina no custo de cada planta — ver botões de craft no index.html).
+const MATERIAL_POR_CONSTRUCAO = {
+    p: 'madeira', m: 'madeira', g: 'madeira',
+    cerca: 'madeira', mesa: 'madeira', cadeira: 'madeira',
+    cama: 'madeira', tocha: 'madeira', bau: 'madeira',
+    muro: 'pedra', piso: 'pedra', fogueira: 'pedra', lareira: 'pedra',
+    // 'indestrutivel' nunca bate com os materiais que machado/picareta demolem
+    // (madeira/pedra) — protege o carro (item caro, comprado com dinheiro) de
+    // ser destruído sem querer minerando perto dele.
+    carro: 'indestrutivel',
+    tv: 'indestrutivel'
+};
+
 // --- SISTEMA DE ESCADAS DA CASA ---
 let listaEscadas = [];
 let listaFogueirasDinamicas = [];
+
+// --- SISTEMA DE CARROS DIRIGÍVEIS ---
+// Cada carro colocado no mundo vira um "dadosCarro" aqui: { grupo (THREE.Group
+// visual), colisor (entrada em objetosMundo que é atualizada em tempo real
+// enquanto o carro anda), velocidade (escalar, unidades/seg) e direcaoY
+// (ângulo de rotação atual do carro). "dirigindoCarro"/"carroAtual" controlam
+// qual carro (se algum) está sendo pilotado agora.
+let carrosNoMundo = [];
+let dirigindoCarro = false;
+let carroAtual = null;
+const posicaoAntesDeDirigir = new THREE.Vector3();
+// CORREÇÃO (erro ao entrar no carro): esse vetor é reaproveitado a cada frame
+// em atualizarDirecaoCarro() pra calcular onde a câmera fica dentro do carro
+// (banco do motorista), mas tinha ficado faltando aqui — sem ele, o jogo
+// quebrava com "offsetCameraCarro is not defined" assim que o jogador entrava.
+const offsetCameraCarro = new THREE.Vector3();
+// Cor escolhida na paleta da loja (aba "Comprar Produtos") antes de comprar.
+let corCarroSelecionada = '#dc2626';
+// Fila FIFO com a cor de cada carro comprado ainda não posicionado no mundo —
+// necessário porque o inventário só guarda uma contagem (planta_carro), sem
+// metadados por unidade, então guardamos as cores compradas nessa fila e
+// consumimos uma a cada vez que o jogador efetivamente planta um carro.
+let filaCoresCarro = [];
 
 // --- CONFIGURAÇÃO INICIAL DO ESPAÇO 3D ---
 const container = document.getElementById('canvas-container');
@@ -93,6 +221,10 @@ const promptInteracao = document.getElementById('prompt-interacao');
 const btnFullscreen = document.getElementById('btn-fullscreen');
 const controlesMobileDiv = document.getElementById('controles-mobile');
 const menuCrafting = document.getElementById('menu-crafting');
+const menuLoja = document.getElementById('menu-loja');
+const menuTV = document.getElementById('menu-tv');
+const menuTVVideo = document.getElementById('menu-tv-jogo');
+const dinheiroHudEl = document.getElementById('dinheiro-hud');
 const barraProgressoContainer = document.getElementById('barra-coleta-container');
 const barraProgressoPreenchimento = document.getElementById('barra-coleta-progresso');
 const btnGirarPlantaMobile = document.getElementById('btn-girar-planta');
@@ -111,6 +243,12 @@ let controles = new THREE.PointerLockControls(camera, document.body);
 const renderizador = new THREE.WebGLRenderer({ antialias: true });
 renderizador.setSize(window.innerWidth, window.innerHeight);
 renderizador.shadowMap.enabled = true; renderizador.shadowMap.type = THREE.PCFSoftShadowMap;
+// PERFORMANCE: as sombras (do sol + da lanterna) são recalculadas manualmente a
+// cada 2 frames em vez de em todo frame (ver "contadorFrameSombra" no loop
+// animar()). O sol e a lanterna se movem devagar em relação à taxa de quadros,
+// então esse atraso de 1 frame é imperceptível, mas corta bastante o custo de
+// renderizar o shadow map — sem mudar nada visualmente.
+renderizador.shadowMap.autoUpdate = false;
 container.appendChild(renderizador.domElement);
 
 let ehTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
@@ -297,9 +435,11 @@ if (typeof controles !== 'undefined' && controles) {
 
     controles.addEventListener('unlock', () => {
         if (jogoIniciado && (!telaStart || telaStart.style.display === 'none')) {
-            // Não abre menu pause se a mochila ou crafting estiverem abertos
+            // Não abre menu pause se a mochila, crafting, o computador ou a TV estiverem abertos
             if (typeof mochilaAberta !== 'undefined' && mochilaAberta) return;
             if (typeof menuCraftingAberto !== 'undefined' && menuCraftingAberto) return;
+            if (typeof menuLojaAberto !== 'undefined' && menuLojaAberto) return;
+            if (typeof menuTVAberto !== 'undefined' && menuTVAberto) return;
 
             if (menuPause) menuPause.style.display = 'flex';
             jogoPausado = true;
@@ -320,6 +460,14 @@ window.addEventListener('keydown', (e) => {
             menuCrafting.style.display = 'none';
             menuCraftingAberto = false;
             if (!ehTouch && controles) controles.lock();
+            return;
+        }
+        if (typeof menuLojaAberto !== 'undefined' && menuLojaAberto) {
+            fecharLoja();
+            return;
+        }
+        if (typeof menuTVAberto !== 'undefined' && menuTVAberto) {
+            fecharMenuTV();
             return;
         }
 
@@ -353,10 +501,15 @@ let temporizadorBobbing = 0, audioAtualTocando = null;
 let bobAtualY = 0, bobAtualX = 0; // guarda o deslocamento de bobbing já aplicado no frame anterior
 
 let mesaTrabalhoMesh = null, menuCraftingAberto = false;
+let escrivaninhaMesh = null, menuLojaAberto = false;
+let menuTVAberto = false;
 
 function atualizarUIAktiv() {
-    // Garante que todo item que o jogador já possui tenha um número reservado
-    // na hotbar (isso é o que faz a numeração seguir a ordem de conquista).
+    // Primeiro libera os espaços de itens que zeraram, depois garante que
+    // todo item que o jogador possui agora tenha um número reservado (isso é
+    // o que faz a numeração seguir a ordem de conquista, com espaço sempre
+    // reaproveitável assim que um item acaba).
+    liberarSlotsVazios();
     Object.keys(CONFIG_ITENS_HOTBAR).forEach(chave => {
         if (inventario[chave] > 0) registrarItemNaHotbar(chave);
     });
@@ -420,7 +573,7 @@ function renderizarHotbar() {
 
         const spanQtd = document.createElement('span');
         spanQtd.className = 'qtd';
-        spanQtd.innerText = cfg.rotulo || qtdAtual;
+        spanQtd.innerText = cfg.rotulo ? `${cfg.rotulo} ${qtdAtual}` : qtdAtual;
         slot.appendChild(spanQtd);
 
         inventarioHudEl.appendChild(slot);
@@ -532,7 +685,7 @@ window.addEventListener('keydown', (e) => {
 
 window.addEventListener('mousedown', (e) => {
     // 1. Trocamos o 'instrucoes' por '!jogoIniciado'
-    if (menuCraftingAberto || !jogoIniciado) return;
+    if (menuCraftingAberto || menuLojaAberto || menuTVAberto || !jogoIniciado || dirigindoCarro) return;
     if (modoConstrucaoAtivo) { executarConstrucaoReal(); }
     // 2. Adicionamos parênteses em volta das ferramentas para evitar conflito de lógica
     else if ((itemAtivo === 'machado' || itemAtivo === 'picareta') && e.button === 0) {
@@ -548,7 +701,7 @@ window.addEventListener('mouseup', (e) => {
 
 window.addEventListener('touchstart', (e) => {
     // 3. Trocamos o 'instrucoes' por '!jogoIniciado' no mobile também
-    if (menuCraftingAberto || !jogoIniciado) return;
+    if (menuCraftingAberto || menuLojaAberto || menuTVAberto || !jogoIniciado || dirigindoCarro) return;
     const joystickZone = document.getElementById('zona-joystick');
     if (e.target.tagName === 'BUTTON' || (joystickZone && joystickZone.contains(e.target))) return;
 
@@ -558,8 +711,12 @@ window.addEventListener('touchstart', (e) => {
 }, { passive: true });
 
 const noKeyDown = (evento) => {
-    if (menuCraftingAberto && evento.code !== 'KeyE') return;
-    switch (evento.code) { case 'KeyW': moverFrente = true; break; case 'KeyS': moverTras = true; break; case 'KeyA': moverEsquerda = true; break; case 'KeyD': moverDireita = true; break; case 'ShiftLeft': correndo = true; break; case 'KeyF': alternarLanterna(); break; case 'KeyE': processarInteracaoGeral(); break; case 'Space': executarPulo(); break; }
+    // Enquanto o jogador está digitando num campo (ex.: quantidade na loja),
+    // deixa o teclado funcionar normalmente em vez de mover o personagem ou
+    // fechar o menu sem querer ao digitar a letra "e".
+    if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+    if ((menuCraftingAberto || menuLojaAberto || menuTVAberto) && evento.code !== 'KeyE') return;
+    switch (evento.code) { case 'KeyW': moverFrente = true; break; case 'KeyS': moverTras = true; break; case 'KeyA': moverEsquerda = true; break; case 'KeyD': moverDireita = true; break; case 'ShiftLeft': correndo = true; break; case 'KeyF': if (dirigindoCarro) { alternarFaroisCarro(); } else { alternarLanterna(); } break; case 'KeyE': processarInteracaoGeral(); break; case 'Space': executarPulo(); break; }
 };
 const noKeyUp = (evento) => {
     switch (evento.code) { case 'KeyW': moverFrente = false; break; case 'KeyS': moverTras = false; break; case 'KeyA': moverEsquerda = false; break; case 'KeyD': moverDireita = false; break; case 'ShiftLeft': correndo = false; break; }
@@ -572,6 +729,16 @@ function executarPulo() { if (podeSaltar) { velocidade.y = FORCA_SALTO; podeSalt
 function processarInteracaoGeral() {
     if (menuCraftingAberto) {
         menuCrafting.style.display = 'none'; menuCraftingAberto = false; controles.lock(); return;
+    }
+    if (menuLojaAberto) {
+        fecharLoja(); return;
+    }
+    if (menuTVAberto) {
+        fecharMenuTV(); return;
+    }
+    // Se estiver dirigindo, a tecla E sempre sai do carro (nunca abre outro menu)
+    if (dirigindoCarro) {
+        sairDoCarro(); return;
     }
 
     raycaster.setFromCamera(vetorCentroTela, camera);
@@ -586,6 +753,14 @@ function processarInteracaoGeral() {
         let noPai = objAlvo;
         let interagiu = false;
         while (noPai && noPai !== cena) {
+            if (noPai.userData && noPai.userData.dadosCarro) {
+                entrarNoCarro(noPai.userData.dadosCarro);
+                interagiu = true; break;
+            }
+            if (noPai.userData && noPai.userData.dadosTV) {
+                abrirMenuTV();
+                interagiu = true; break;
+            }
             if (noPai.userData && noPai.userData.ePorta) {
                 noPai.userData.aberta = !noPai.userData.aberta;
                 if (noPai.userData.aberta && somPortaAbrir.buffer) somPortaAbrir.play();
@@ -595,6 +770,11 @@ function processarInteracaoGeral() {
             if (noPai === mesaTrabalhoMesh || noPai.parent === mesaTrabalhoMesh) {
                 menuCraftingAberto = true; menuCrafting.style.display = 'block'; pararSonsDeMovimento(); controles.unlock();
                 atualizarEstadoCraftingUI();
+                return;
+            }
+            if (noPai === escrivaninhaMesh || noPai.parent === escrivaninhaMesh) {
+                menuLojaAberto = true; menuLoja.style.display = 'block'; pararSonsDeMovimento(); controles.unlock();
+                atualizarUILoja();
                 return;
             }
             noPai = noPai.parent;
@@ -620,6 +800,18 @@ function processarInteracaoGeral() {
 }
 window.craftarConstrucao = function (tipo, custoMadeira, custoPedra = 0) {
     if (inventario.madeira >= custoMadeira && inventario.pedra >= custoPedra) {
+        const chaveItem = 'planta_' + tipo;
+
+        // CORREÇÃO: antes o item era criado (e a madeira/pedra gasta) mesmo
+        // sem sobrar espaço na hotbar — o item ficava "preso" no inventário,
+        // sem número, impossível de usar, e o jogador ainda perdia o
+        // material. Agora a checagem acontece ANTES de cobrar qualquer
+        // recurso: só nega (e avisa) quando esse item ainda não tem espaço
+        // reservado E os 10 espaços já estão todos ocupados por outros tipos.
+        if (!registrarItemNaHotbar(chaveItem, true)) {
+            return;
+        }
+
         inventario.madeira -= custoMadeira;
         inventario.pedra -= custoPedra;
 
@@ -697,10 +889,36 @@ document.querySelectorAll('.aba-craft').forEach(aba => {
 });
 document.getElementById('btn-fechar-crafting')?.addEventListener('click', () => processarInteracaoGeral());
 
-document.getElementById('btn-lanterna')?.addEventListener('touchstart', (e) => { e.preventDefault(); alternarLanterna(); });
+// Abas do computador (Vender Recursos / Comprar Produtos)
+document.querySelectorAll('.aba-loja').forEach(aba => {
+    aba.addEventListener('click', () => {
+        document.querySelectorAll('.aba-loja').forEach(a => a.classList.remove('ativa'));
+        aba.classList.add('ativa');
+        const alvo = aba.dataset.abaLoja;
+        document.querySelectorAll('.loja-painel').forEach(painel => {
+            painel.style.display = (painel.dataset.lojaPainel === alvo) ? 'block' : 'none';
+        });
+    });
+});
+
+// Paleta de cores do carro (aba "Comprar Produtos")
+document.querySelectorAll('#paleta-cores-carro .cor-opcao').forEach(botaoCor => {
+    botaoCor.addEventListener('click', () => {
+        document.querySelectorAll('#paleta-cores-carro .cor-opcao').forEach(b => b.classList.remove('ativa'));
+        botaoCor.classList.add('ativa');
+        corCarroSelecionada = botaoCor.dataset.cor;
+    });
+});
+
+document.getElementById('btn-lanterna')?.addEventListener('touchstart', (e) => { e.preventDefault(); if (dirigindoCarro) { alternarFaroisCarro(); } else { alternarLanterna(); } });
 document.getElementById('btn-pulo')?.addEventListener('touchstart', (e) => { e.preventDefault(); executarPulo(); });
 document.getElementById('btn-interagir')?.addEventListener('touchstart', (e) => {
     e.preventDefault();
+    // Dirigindo, o botão sempre sai do carro (mesmo comportamento do 'E')
+    if (dirigindoCarro) {
+        processarInteracaoGeral();
+        return;
+    }
     // Se estiver com a planta na mão, o botão constrói a casa. Se não, ele interage normalmente com portas/escadas.
     if (modoConstrucaoAtivo) {
         executarConstrucaoReal();
@@ -814,6 +1032,54 @@ const telhadoCab = new THREE.Mesh(new THREE.ConeGeometry(5.2, 2.5, 4), matTelhad
 mesaTrabalhoMesh = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.9, 1.0), new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.7 })); mesaTrabalhoMesh.position.set(1.8, 0.65, -1.5); mesaTrabalhoMesh.castShadow = true; mesaTrabalhoMesh.receiveShadow = true; grupoCabana.add(mesaTrabalhoMesh);
 const tampoVisM = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.1, 1.1), new THREE.MeshStandardMaterial({ color: 0x78350f })); tampoVisM.position.set(1.8, 1.1, -1.5); grupoCabana.add(tampoVisM);
 
+// --- ESCRIVANINHA COM PC (permite vender os recursos coletados) ---
+// Fica do lado oposto da mesa de trabalho, encostada na mesma parede dos
+// fundos, então as duas "estações" ficam simétricas dentro da cabana.
+const grupoEscrivaninha = new THREE.Group();
+const matMadeiraEscrivaninha = new THREE.MeshStandardMaterial({ color: 0x5c4033, roughness: 0.75 });
+const matMetalPC = new THREE.MeshStandardMaterial({ color: 0x27272a, roughness: 0.5, metalness: 0.4 });
+const matTelaPC = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.3, emissive: 0x38bdf8, emissiveIntensity: 0.55 });
+
+const ALTURA_TAMPO_ESCRIVANINHA = 1.05;
+
+const tampoEscrivaninha = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.08, 0.7), matMadeiraEscrivaninha);
+tampoEscrivaninha.position.set(0, ALTURA_TAMPO_ESCRIVANINHA, 0); tampoEscrivaninha.castShadow = true; tampoEscrivaninha.receiveShadow = true;
+grupoEscrivaninha.add(tampoEscrivaninha);
+
+// Pernas (do chão da cabana, y=0.2, até a base do tampo)
+const alturaPernaEscrivaninha = ALTURA_TAMPO_ESCRIVANINHA - 0.2 - 0.04;
+[[-0.56, -0.28], [0.56, -0.28], [-0.56, 0.28], [0.56, 0.28]].forEach(([px, pz]) => {
+    const pernaEscrivaninha = new THREE.Mesh(new THREE.BoxGeometry(0.07, alturaPernaEscrivaninha, 0.07), matMadeiraEscrivaninha);
+    pernaEscrivaninha.position.set(px, 0.2 + alturaPernaEscrivaninha / 2, pz);
+    pernaEscrivaninha.castShadow = true; grupoEscrivaninha.add(pernaEscrivaninha);
+});
+
+// Monitor (base + haste + tela + "vidro" brilhando), encostado ao fundo do tampo
+const baseMonitorPC = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 0.03, 12), matMetalPC);
+baseMonitorPC.position.set(0, 1.105, -0.15); grupoEscrivaninha.add(baseMonitorPC);
+const hasteMonitorPC = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.14, 0.04), matMetalPC);
+hasteMonitorPC.position.set(0, 1.19, -0.15); grupoEscrivaninha.add(hasteMonitorPC);
+const telaMonitorPC = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.3, 0.03), matMetalPC);
+telaMonitorPC.position.set(0, 1.41, -0.15); telaMonitorPC.castShadow = true; grupoEscrivaninha.add(telaMonitorPC);
+const vidroMonitorPC = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.24), matTelaPC);
+vidroMonitorPC.position.set(0, 1.41, -0.134); grupoEscrivaninha.add(vidroMonitorPC);
+
+// Teclado e mouse, na borda da frente do tampo (lado do jogador)
+const tecladoPC = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.02, 0.15), matMetalPC);
+tecladoPC.position.set(0, 1.1, 0.15); grupoEscrivaninha.add(tecladoPC);
+const mousePC = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.03, 0.09), matMetalPC);
+mousePC.position.set(0.28, 1.105, 0.15); grupoEscrivaninha.add(mousePC);
+
+// Gabinete (CPU) no chão, encostado na lateral direita da escrivaninha
+const gabinetePC = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.5, 0.45), matMetalPC);
+gabinetePC.position.set(0.72, 0.45, -0.05); gabinetePC.castShadow = true; grupoEscrivaninha.add(gabinetePC);
+const ledGabinetePC = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.4, 0.02), new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x38bdf8, emissiveIntensity: 1 }));
+ledGabinetePC.position.set(0.615, 0.45, -0.05); grupoEscrivaninha.add(ledGabinetePC);
+
+grupoEscrivaninha.position.set(-1.8, 0, -1.5);
+grupoCabana.add(grupoEscrivaninha);
+escrivaninhaMesh = grupoEscrivaninha;
+
 const portaCabana = gerarPorta(-0.75, 0.2, 2.5, grupoCabana);
 grupoCabana.position.set(cabanaX, hCabana, cabanaZ); cena.add(grupoCabana); objetosRaycast.push(grupoCabana);
 zonasInteriores.push({ tipo: 'casa', x: cabanaX, z: cabanaZ, w: 5.6, d: 4.6, pisos: [hCabana + 0.5], pisoMax: 1 });
@@ -907,7 +1173,10 @@ const DIMENSOES_CONSTRUCAO = {
     mesa: { largura: 1.3, profundidade: 0.8, altura: 0.75 },
     cadeira: { largura: 0.55, profundidade: 0.55, altura: 0.9 },
     bau: { largura: 1.0, profundidade: 0.6, altura: 0.7 },
-    lareira: { largura: 1.7, profundidade: 0.8, altura: 1.7 }
+    lareira: { largura: 1.7, profundidade: 0.8, altura: 1.7 },
+    // Produtos comprados no computador
+    carro: { largura: 2.2, profundidade: 4.6, altura: 1.6 },
+    tv: { largura: 1.1, profundidade: 0.5, altura: 1.3 }
 };
 function obterDimensoes(tipo) { return DIMENSOES_CONSTRUCAO[tipo] || DIMENSOES_CONSTRUCAO.p; }
 
@@ -1200,18 +1469,26 @@ function construirTochaFisica(posX, posY, posZ) {
     grupoTocha.add(fogo);
 
     // 4. A Luz Real da Tocha (Luz amarelada que ilumina o mundo)
+    // CORREÇÃO (travada/lag ao construir): PointLight com sombra é o tipo mais
+    // caro de luz no Three.js (renderiza a cena 6x pra montar o cubemap de
+    // sombra) e a primeira compilação do shader trava o frame. Fogueira e
+    // lareira usam a mesma PointLight só que SEM sombra — a tocha agora segue
+    // o mesmo padrão.
     const luzTocha = new THREE.PointLight(0xff9900, 1.5, 12);
     luzTocha.position.y = 1.5;
-    luzTocha.castShadow = true;
-    luzTocha.shadow.bias = -0.002;
     grupoTocha.add(luzTocha);
 
     // Posiciona o conjunto inteiro no mapa
     grupoTocha.position.set(posX, posY, posZ);
     cena.add(grupoTocha);
 
-    // Adiciona o bastão na lista de colisões para que o jogador não atravesse
-    objetosRaycast.push(bastao);
+    // CORREÇÃO (tocha não sumia ao demolir): antes só o "bastao" (filho do
+    // grupo) era registrado aqui. demolirConstrucao() chama cena.remove()
+    // nesse objeto, mas como o bastão não é filho direto da cena (é filho de
+    // grupoTocha), o remove não fazia nada — a tocha inteira ficava presa no
+    // mundo pra sempre, mesmo com o item voltando certinho pro inventário.
+    // Agora registramos o GRUPO inteiro, igual às outras construções.
+    objetosRaycast.push(grupoTocha);
 }
 
 function criarModeloCama() {
@@ -1424,6 +1701,861 @@ function construirLareiraFisica(posX, posY, posZ, rotacaoY) {
     return grupo;
 }
 
+// ============================================================
+// MODELO 3D: CARRO (produto comprado no computador)
+// ============================================================
+// Convenção deste modelo: o "nariz" do carro (capô/faróis) fica no eixo -Z
+// local, e o "porta-malas" (lanternas) no eixo +Z local — igual à convenção
+// de "frente" que o resto do jogo já usa pra direção da câmera/jogador, o
+// que facilita a matemática de movimento em atualizarDirecaoCarro().
+// "corHex" (opcional, ex: "#dc2626") é a cor escolhida pelo jogador na
+// paleta da loja ao comprar; se não vier nenhuma, sorteia uma cor aleatória.
+function criarModeloCarro(corHex) {
+    const grupo = new THREE.Group();
+
+    const corCarroceria = corHex ? new THREE.Color(corHex) : new THREE.Color().setHSL(Math.random(), 0.55, 0.42);
+    const matCarroceria = new THREE.MeshStandardMaterial({ color: corCarroceria, roughness: 0.35, metalness: 0.55 });
+    const matVidro = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.1, metalness: 0.2, transparent: true, opacity: 0.75 });
+    const matPneu = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
+    const matAro = new THREE.MeshStandardMaterial({ color: 0xc0c0c0, roughness: 0.4, metalness: 0.7 });
+    const matFarol = new THREE.MeshStandardMaterial({ color: 0xfff8dc, emissive: 0xfff8dc, emissiveIntensity: 0.6 });
+    const matLanterna = new THREE.MeshStandardMaterial({ color: 0xb91c1c, emissive: 0x7f1d1d, emissiveIntensity: 0.5 });
+    const matParachoque = new THREE.MeshStandardMaterial({ color: 0x2b2b2b, roughness: 0.6, metalness: 0.3 });
+
+    // Chassi/carroceria principal
+    const chassi = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.65, 4.2), matCarroceria);
+    chassi.position.y = 0.62;
+    grupo.add(chassi);
+
+    // Cabine (parte de cima, mais estreita e puxada pro centro/traseira)
+    const cabine = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.55, 2.1), matCarroceria);
+    cabine.position.set(0, 1.14, 0.15);
+    grupo.add(cabine);
+
+    // Para-brisa dianteiro (inclinado)
+    const paraBrisa = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.5, 0.08), matVidro);
+    paraBrisa.position.set(0, 1.12, -0.88);
+    paraBrisa.rotation.x = 0.35;
+    grupo.add(paraBrisa);
+
+    // Vidro traseiro
+    const vidroTraseiro = paraBrisa.clone();
+    vidroTraseiro.position.set(0, 1.12, 1.2);
+    vidroTraseiro.rotation.x = -0.35;
+    grupo.add(vidroTraseiro);
+
+    // Vidros laterais
+    [-0.86, 0.86].forEach(px => {
+        const vidroLat = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.4, 1.7), matVidro);
+        vidroLat.position.set(px, 1.14, 0.15);
+        grupo.add(vidroLat);
+    });
+
+    // Capô frontal (nariz, -Z)
+    const capo = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.12, 1.1), matCarroceria);
+    capo.position.set(0, 0.98, -1.55);
+    grupo.add(capo);
+
+    // Para-choques
+    const paraChoqueFrente = new THREE.Mesh(new THREE.BoxGeometry(2.05, 0.28, 0.25), matParachoque);
+    paraChoqueFrente.position.set(0, 0.5, -2.05);
+    grupo.add(paraChoqueFrente);
+    const paraChoqueTras = paraChoqueFrente.clone();
+    paraChoqueTras.position.set(0, 0.5, 2.05);
+    grupo.add(paraChoqueTras);
+
+    // Faróis (frente, -Z) — a caixinha emissiva (visual) + uma luz de verdade
+    // (SpotLight) que ilumina o caminho à frente, ligada/desligada com F.
+    // Começa desligada (intensity 0); ver alternarFaroisCarro().
+    const luzesFarol = [];
+    [-0.7, 0.7].forEach(px => {
+        const farol = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.18, 0.08), matFarol);
+        farol.position.set(px, 0.68, -2.08);
+        grupo.add(farol);
+
+        const luzFarol = new THREE.SpotLight(0xfff4d6, 0, 26, Math.PI / 6.5, 0.45, 1.3);
+        luzFarol.position.set(px, 0.68, -2.08);
+        luzFarol.castShadow = false;
+        grupo.add(luzFarol);
+
+        // Alvo do foco de luz: um ponto bem à frente do carro (eixo -Z local),
+        // filho do grupo pra acompanhar posição/rotação do carro automaticamente.
+        const alvoFarol = new THREE.Object3D();
+        alvoFarol.position.set(px * 0.35, 0.1, -14);
+        grupo.add(alvoFarol);
+        luzFarol.target = alvoFarol;
+
+        luzesFarol.push(luzFarol);
+    });
+    grupo.userData.luzesFarol = luzesFarol;
+    grupo.userData.matFarol = matFarol;
+    grupo.userData.farolLigado = false;
+
+    // Lanternas traseiras (+Z)
+    [-0.7, 0.7].forEach(px => {
+        const lanterna = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.18, 0.08), matLanterna);
+        lanterna.position.set(px, 0.68, 2.08);
+        grupo.add(lanterna);
+    });
+
+    // Rodas: cada uma é um grupo (permite "esterçar" as da frente) contendo o
+    // pneu (girado 90° UMA vez com rotateZ, pra deitar o cilindro de lado) e o
+    // aro como filho do pneu (herda a orientação, gira junto automaticamente).
+    const rodasGirando = [];
+    const rodasDianteiras = [];
+    [[-1.02, -1.35], [1.02, -1.35], [-1.02, 1.35], [1.02, 1.35]].forEach(([px, pz]) => {
+        const grupoRoda = new THREE.Group();
+
+        const pneu = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.32, 16), matPneu);
+        pneu.rotateZ(Math.PI / 2);
+        grupoRoda.add(pneu);
+
+        const aro = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.34, 12), matAro);
+        pneu.add(aro); // filho do pneu: gira junto quando o pneu rola
+
+        grupoRoda.position.set(px, 0.44, pz);
+        grupo.add(grupoRoda);
+
+        rodasGirando.push(pneu);
+        if (pz < 0) rodasDianteiras.push(grupoRoda); // rodas da frente esterçam ao virar
+    });
+
+    grupo.traverse(obj => { if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; } });
+
+    grupo.userData.rodasGirando = rodasGirando;
+    grupo.userData.rodasDianteiras = rodasDianteiras;
+
+    return grupo;
+}
+
+// ============================================================
+// MODELO 3D: TELEVISÃO (produto comprado no computador)
+// ============================================================
+// Um rack baixo de madeira + a TV em pé sobre ele, com a "tela" de frente
+// pro eixo -Z local (mesma convenção do carro: nariz/frente em -Z), pra
+// combinar com a rotação escolhida no holograma na hora de posicionar.
+function criarModeloTV() {
+    const grupo = new THREE.Group();
+
+    const matRack = new THREE.MeshStandardMaterial({ color: 0x4b2f1d, roughness: 0.7, metalness: 0.1 });
+    const matCorpoTV = new THREE.MeshStandardMaterial({ color: 0x111318, roughness: 0.4, metalness: 0.5 });
+    const matTela = new THREE.MeshStandardMaterial({ color: 0x0a0d12, roughness: 0.25, metalness: 0.1, emissive: 0x1e293b, emissiveIntensity: 0.25 });
+    const matPe = new THREE.MeshStandardMaterial({ color: 0x1f2937, roughness: 0.5, metalness: 0.4 });
+
+    // Rack/mesa baixa
+    const rack = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.5, 0.42), matRack);
+    rack.position.y = 0.25;
+    grupo.add(rack);
+    [[-0.42, -0.15], [0.42, -0.15], [-0.42, 0.15], [0.42, 0.15]].forEach(([px, pz]) => {
+        const perna = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.5, 0.05), matRack);
+        perna.position.set(px, -0.25, pz);
+        rack.add(perna);
+    });
+
+    // Pé/suporte da TV
+    const pe = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.08, 0.14), matPe);
+    pe.position.set(0, 0.54, -0.05);
+    grupo.add(pe);
+    const haste = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.16, 0.08), matPe);
+    haste.position.set(0, 0.62, -0.05);
+    grupo.add(haste);
+
+    // Corpo da TV (moldura) + tela
+    const corpoTV = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.6, 0.06), matCorpoTV);
+    corpoTV.position.set(0, 0.98, -0.08);
+    grupo.add(corpoTV);
+    const tela = new THREE.Mesh(new THREE.PlaneGeometry(0.92, 0.52), matTela);
+    tela.position.set(0, 0.98, -0.111);
+    grupo.add(tela);
+
+    grupo.traverse(obj => { if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; } });
+    grupo.userData.matTela = matTela; // pra dar aquele "brilho" na tela quando algum filme está tocando
+
+    return grupo;
+}
+
+// Abre o menu de minigames da TV (tecla E perto dela). Mostra a grade de
+// cards montada a partir do array MINIGAMES lá em cima.
+function abrirMenuTV() {
+    if (menuTVAberto || menuCraftingAberto || menuLojaAberto || dirigindoCarro) return;
+
+    menuTVAberto = true;
+    renderizarGradeJogos();
+    if (menuTV) menuTV.style.display = 'block';
+    pararSonsDeMovimento();
+    if (!ehTouch && controles) controles.unlock();
+}
+
+// Fecha tudo relacionado à TV (grade de jogos + minigame ativo, se estiver aberto).
+function fecharMenuTV() {
+    fecharJogo();
+    if (menuTV) menuTV.style.display = 'none';
+    menuTVAberto = false;
+    if (!ehTouch && controles) controles.lock();
+}
+
+// Monta os cards de minigame dinamicamente a partir do array MINIGAMES.
+function renderizarGradeJogos() {
+    const grade = document.getElementById('tv-grid');
+    if (!grade) return;
+    grade.innerHTML = '';
+
+    MINIGAMES.forEach((jogo, indice) => {
+        const card = document.createElement('div');
+        card.className = 'tv-card';
+        card.innerHTML =
+            '<div class="tv-card-capa">' + jogo.emoji + '</div>' +
+            '<div class="tv-card-titulo">' + jogo.titulo + '</div>' +
+            '<div class="tv-card-descricao">' + jogo.descricao + '</div>';
+        card.addEventListener('click', () => abrirJogo(indice));
+        grade.appendChild(card);
+    });
+}
+
+// Função de limpeza do minigame atualmente aberto (cancela intervalos/
+// listeners próprios dele). Fica null quando nenhum jogo está rodando.
+let pararJogoAtual = null;
+
+// Abre o minigame escolhido (sobrepõe a grade de jogos).
+function abrirJogo(indice) {
+    const jogo = MINIGAMES[indice];
+    const area = document.getElementById('tv-jogo-area');
+    if (!jogo || !area) return;
+
+    fecharJogo(); // por garantia, encerra qualquer jogo anterior antes de abrir outro
+
+    const tituloEl = document.getElementById('tv-jogo-titulo');
+    if (tituloEl) tituloEl.innerText = jogo.titulo;
+
+    area.innerHTML = '';
+    pararJogoAtual = jogo.iniciar(area) || null;
+
+    if (menuTVVideo) menuTVVideo.style.display = 'block';
+}
+
+// Fecha só o minigame ativo (cancelando seus intervalos/listeners) e volta
+// pra grade de jogos — usado tanto pelo botão "Voltar" quanto ao fechar a
+// TV inteira.
+function fecharJogo() {
+    if (typeof pararJogoAtual === 'function') pararJogoAtual();
+    pararJogoAtual = null;
+
+    const area = document.getElementById('tv-jogo-area');
+    if (area) area.innerHTML = '';
+    if (menuTVVideo) menuTVVideo.style.display = 'none';
+}
+
+// ============================================================
+// MINIGAMES DA TV — implementações
+// ============================================================
+// Cada função recebe o <div> container (já vazio) onde deve montar sua UI,
+// e retorna uma função "parar" que cancela qualquer setInterval/
+// requestAnimationFrame e remove os listeners que essa função criou. Isso é
+// chamado automaticamente por fecharJogo()/abrirJogo() pra nenhum jogo
+// continuar rodando (ou vazando memória) depois que o jogador sai da TV.
+
+// --- 🐍 Cobrinha ---
+function iniciarJogoCobrinha(container) {
+    container.innerHTML =
+        '<div class="jogo-status" id="cobrinha-status">Pontos: 0</div>' +
+        '<canvas id="cobrinha-canvas" width="342" height="342" class="mini-jogo-canvas"></canvas>' +
+        '<div class="jogo-dica">Use as setas ou WASD pra mover • clique no jogo pra reiniciar depois de perder</div>';
+
+    const canvas = container.querySelector('#cobrinha-canvas');
+    const ctx = canvas.getContext('2d');
+    const statusEl = container.querySelector('#cobrinha-status');
+    const tam = 18;
+    const colunas = Math.floor(canvas.width / tam);
+
+    let cobra, direcao, proxDirecao, comida, pontos, vivo, intervaloId;
+
+    function posicionarComida() {
+        do {
+            comida = { x: Math.floor(Math.random() * colunas), y: Math.floor(Math.random() * colunas) };
+        } while (cobra.some(s => s.x === comida.x && s.y === comida.y));
+    }
+    function atualizarStatus() {
+        statusEl.innerText = vivo ? ('Pontos: ' + pontos) : ('Fim de jogo! Pontos: ' + pontos + ' — clique pra reiniciar');
+    }
+    function desenhar() {
+        ctx.fillStyle = '#0f172a'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(comida.x * tam, comida.y * tam, tam - 2, tam - 2);
+        cobra.forEach((s, i) => {
+            ctx.fillStyle = i === 0 ? '#4ade80' : '#22c55e';
+            ctx.fillRect(s.x * tam, s.y * tam, tam - 2, tam - 2);
+        });
+    }
+    function reiniciar() {
+        cobra = [{ x: 8, y: 8 }];
+        direcao = { x: 1, y: 0 };
+        proxDirecao = { x: 1, y: 0 };
+        pontos = 0;
+        vivo = true;
+        posicionarComida();
+        atualizarStatus();
+        desenhar();
+    }
+    function passo() {
+        if (!vivo) return;
+        direcao = proxDirecao;
+        const cabeca = { x: cobra[0].x + direcao.x, y: cobra[0].y + direcao.y };
+        const bateu = cabeca.x < 0 || cabeca.x >= colunas || cabeca.y < 0 || cabeca.y >= colunas ||
+            cobra.some(s => s.x === cabeca.x && s.y === cabeca.y);
+        if (bateu) { vivo = false; atualizarStatus(); return; }
+
+        cobra.unshift(cabeca);
+        if (cabeca.x === comida.x && cabeca.y === comida.y) {
+            pontos++; posicionarComida(); atualizarStatus();
+        } else {
+            cobra.pop();
+        }
+        desenhar();
+    }
+    function aoTeclar(e) {
+        const mapa = {
+            ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 }, ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 },
+            KeyW: { x: 0, y: -1 }, KeyS: { x: 0, y: 1 }, KeyA: { x: -1, y: 0 }, KeyD: { x: 1, y: 0 }
+        };
+        const nova = mapa[e.code];
+        if (!nova) return;
+        e.preventDefault();
+        if (nova.x === -direcao.x && nova.y === -direcao.y) return; // não deixa virar 180° de uma vez
+        proxDirecao = nova;
+    }
+    function aoClicar() { if (!vivo) reiniciar(); }
+
+    document.addEventListener('keydown', aoTeclar);
+    canvas.addEventListener('click', aoClicar);
+
+    reiniciar();
+    intervaloId = setInterval(passo, 130);
+
+    return function parar() {
+        clearInterval(intervaloId);
+        document.removeEventListener('keydown', aoTeclar);
+        canvas.removeEventListener('click', aoClicar);
+    };
+}
+
+// --- ❌⭕ Jogo da Velha (2 jogadores, mesmo dispositivo) ---
+function iniciarJogoVelha(container) {
+    container.innerHTML =
+        '<div class="jogo-status" id="velha-status">Vez de: ❌</div>' +
+        '<div class="velha-grid" id="velha-grid"></div>' +
+        '<button class="jogo-btn-reiniciar" id="velha-reiniciar">🔄 Reiniciar</button>';
+
+    const grid = container.querySelector('#velha-grid');
+    const statusEl = container.querySelector('#velha-status');
+    const LINHAS_VITORIA = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+
+    let tabuleiro, vez, fimDeJogo;
+
+    function checarVitoria() {
+        for (const [a, b, c] of LINHAS_VITORIA) {
+            if (tabuleiro[a] && tabuleiro[a] === tabuleiro[b] && tabuleiro[a] === tabuleiro[c]) return tabuleiro[a];
+        }
+        return tabuleiro.every(v => v) ? 'empate' : null;
+    }
+    function desenhar() {
+        grid.innerHTML = '';
+        tabuleiro.forEach((valor, indice) => {
+            const cel = document.createElement('div');
+            cel.className = 'velha-celula';
+            cel.innerText = valor === 'X' ? '❌' : valor === 'O' ? '⭕' : '';
+            cel.addEventListener('click', () => jogar(indice));
+            grid.appendChild(cel);
+        });
+    }
+    function jogar(indice) {
+        if (fimDeJogo || tabuleiro[indice]) return;
+        tabuleiro[indice] = vez;
+        const resultado = checarVitoria();
+        desenhar();
+        if (resultado === 'empate') {
+            fimDeJogo = true; statusEl.innerText = 'Empate! Clique em Reiniciar';
+        } else if (resultado) {
+            fimDeJogo = true; statusEl.innerText = (resultado === 'X' ? '❌' : '⭕') + ' venceu! Clique em Reiniciar';
+        } else {
+            vez = vez === 'X' ? 'O' : 'X';
+            statusEl.innerText = 'Vez de: ' + (vez === 'X' ? '❌' : '⭕');
+        }
+    }
+    function reiniciar() {
+        tabuleiro = Array(9).fill(null);
+        vez = 'X';
+        fimDeJogo = false;
+        statusEl.innerText = 'Vez de: ❌';
+        desenhar();
+    }
+
+    container.querySelector('#velha-reiniciar').addEventListener('click', reiniciar);
+    reiniciar();
+
+    return function parar() { /* sem timers/listeners globais pra limpar aqui */ };
+}
+
+// --- 🧠 Jogo da Memória (achar os pares) ---
+function iniciarJogoMemoria(container) {
+    container.innerHTML =
+        '<div class="jogo-status" id="memoria-status">Jogadas: 0</div>' +
+        '<div class="memoria-grid" id="memoria-grid"></div>' +
+        '<button class="jogo-btn-reiniciar" id="memoria-reiniciar">🔄 Reiniciar</button>';
+
+    const grid = container.querySelector('#memoria-grid');
+    const statusEl = container.querySelector('#memoria-status');
+    const EMOJIS = ['🍎', '🍌', '🍇', '🍉', '🍕', '🎈', '⚽', '🚀'];
+
+    let cartas, viradas, combinadas, jogadas, travado, timeoutId;
+
+    function embaralhar(lista) {
+        for (let i = lista.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [lista[i], lista[j]] = [lista[j], lista[i]];
+        }
+        return lista;
+    }
+    function desenhar() {
+        grid.innerHTML = '';
+        cartas.forEach((emoji, indice) => {
+            const virada = viradas.includes(indice) || combinadas.includes(indice);
+            const carta = document.createElement('div');
+            carta.className = 'memoria-carta' + (virada ? ' virada' : '');
+            carta.innerText = virada ? emoji : '❓';
+            carta.addEventListener('click', () => virar(indice));
+            grid.appendChild(carta);
+        });
+    }
+    function virar(indice) {
+        if (travado || viradas.includes(indice) || combinadas.includes(indice)) return;
+        viradas.push(indice);
+        desenhar();
+        if (viradas.length < 2) return;
+
+        jogadas++;
+        statusEl.innerText = 'Jogadas: ' + jogadas;
+        travado = true;
+        const [i1, i2] = viradas;
+        if (cartas[i1] === cartas[i2]) {
+            combinadas.push(i1, i2);
+            viradas = [];
+            travado = false;
+            desenhar();
+            if (combinadas.length === cartas.length) {
+                statusEl.innerText = '🎉 Você venceu em ' + jogadas + ' jogadas!';
+            }
+        } else {
+            timeoutId = setTimeout(() => {
+                viradas = [];
+                travado = false;
+                desenhar();
+            }, 800);
+        }
+    }
+    function reiniciar() {
+        cartas = embaralhar([...EMOJIS, ...EMOJIS]);
+        viradas = []; combinadas = []; jogadas = 0; travado = false;
+        if (timeoutId) clearTimeout(timeoutId);
+        statusEl.innerText = 'Jogadas: 0';
+        desenhar();
+    }
+
+    container.querySelector('#memoria-reiniciar').addEventListener('click', reiniciar);
+    reiniciar();
+
+    return function parar() { if (timeoutId) clearTimeout(timeoutId); };
+}
+
+// --- 🏓 Pong (contra uma IA simples) ---
+function iniciarJogoPong(container) {
+    container.innerHTML =
+        '<div class="jogo-status" id="pong-status">Você: 0  x  CPU: 0</div>' +
+        '<canvas id="pong-canvas" width="460" height="280" class="mini-jogo-canvas"></canvas>' +
+        '<div class="jogo-dica">Mova o mouse sobre o jogo ou use W/S pra controlar sua raquete</div>';
+
+    const canvas = container.querySelector('#pong-canvas');
+    const ctx = canvas.getContext('2d');
+    const statusEl = container.querySelector('#pong-status');
+    const alturaRaquete = 58, larguraRaquete = 10;
+
+    let raqueteJogador = canvas.height / 2 - alturaRaquete / 2;
+    let raqueteCPU = canvas.height / 2 - alturaRaquete / 2;
+    let bola = { x: canvas.width / 2, y: canvas.height / 2, vx: 4, vy: 3 };
+    let placarJogador = 0, placarCPU = 0;
+    let teclas = { cima: false, baixo: false };
+    let rodando = true;
+
+    function reiniciarBola() {
+        bola.x = canvas.width / 2; bola.y = canvas.height / 2;
+        bola.vx = (Math.random() > 0.5 ? 4 : -4);
+        bola.vy = (Math.random() * 4 - 2);
+    }
+    function desenhar() {
+        ctx.fillStyle = '#0f172a'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#f3f4f6';
+        ctx.fillRect(6, raqueteJogador, larguraRaquete, alturaRaquete);
+        ctx.fillRect(canvas.width - larguraRaquete - 6, raqueteCPU, larguraRaquete, alturaRaquete);
+        ctx.beginPath(); ctx.arc(bola.x, bola.y, 6, 0, Math.PI * 2); ctx.fill();
+    }
+    function passo() {
+        if (!rodando) return;
+
+        if (teclas.cima) raqueteJogador = Math.max(raqueteJogador - 6, 0);
+        if (teclas.baixo) raqueteJogador = Math.min(raqueteJogador + 6, canvas.height - alturaRaquete);
+
+        const centroCPU = raqueteCPU + alturaRaquete / 2;
+        if (centroCPU < bola.y - 10) raqueteCPU += 3.4;
+        else if (centroCPU > bola.y + 10) raqueteCPU -= 3.4;
+        raqueteCPU = Math.min(Math.max(raqueteCPU, 0), canvas.height - alturaRaquete);
+
+        bola.x += bola.vx; bola.y += bola.vy;
+        if (bola.y <= 0 || bola.y >= canvas.height) bola.vy *= -1;
+
+        if (bola.x <= larguraRaquete + 6 && bola.x > 0 && bola.y >= raqueteJogador && bola.y <= raqueteJogador + alturaRaquete) {
+            bola.vx = Math.abs(bola.vx) * 1.04;
+            bola.vy += (Math.random() * 2 - 1);
+        }
+        if (bola.x >= canvas.width - larguraRaquete - 6 && bola.x < canvas.width && bola.y >= raqueteCPU && bola.y <= raqueteCPU + alturaRaquete) {
+            bola.vx = -Math.abs(bola.vx) * 1.04;
+            bola.vy += (Math.random() * 2 - 1);
+        }
+
+        if (bola.x < 0) { placarCPU++; atualizarStatus(); reiniciarBola(); }
+        if (bola.x > canvas.width) { placarJogador++; atualizarStatus(); reiniciarBola(); }
+
+        desenhar();
+        requestAnimationFrame(passo);
+    }
+    function atualizarStatus() { statusEl.innerText = 'Você: ' + placarJogador + '  x  CPU: ' + placarCPU; }
+    function aoMoverMouse(e) {
+        const retangulo = canvas.getBoundingClientRect();
+        const y = e.clientY - retangulo.top;
+        raqueteJogador = Math.min(Math.max(y - alturaRaquete / 2, 0), canvas.height - alturaRaquete);
+    }
+    function aoTeclar(e) {
+        if (e.code === 'KeyW' || e.code === 'ArrowUp') { teclas.cima = true; e.preventDefault(); }
+        if (e.code === 'KeyS' || e.code === 'ArrowDown') { teclas.baixo = true; e.preventDefault(); }
+    }
+    function aoSoltarTecla(e) {
+        if (e.code === 'KeyW' || e.code === 'ArrowUp') teclas.cima = false;
+        if (e.code === 'KeyS' || e.code === 'ArrowDown') teclas.baixo = false;
+    }
+
+    canvas.addEventListener('mousemove', aoMoverMouse);
+    document.addEventListener('keydown', aoTeclar);
+    document.addEventListener('keyup', aoSoltarTecla);
+
+    atualizarStatus();
+    desenhar();
+    requestAnimationFrame(passo);
+
+    return function parar() {
+        rodando = false;
+        canvas.removeEventListener('mousemove', aoMoverMouse);
+        document.removeEventListener('keydown', aoTeclar);
+        document.removeEventListener('keyup', aoSoltarTecla);
+    };
+}
+
+// --- ⚡ Reflexo (clique rápido, 30 segundos) ---
+function iniciarJogoReflexo(container) {
+    container.innerHTML =
+        '<div class="jogo-status" id="reflexo-status">Clique em "Começar" pra jogar!</div>' +
+        '<div class="reflexo-grid" id="reflexo-grid"></div>' +
+        '<button class="jogo-btn-reiniciar" id="reflexo-comecar">▶ Começar (30s)</button>';
+
+    const grid = container.querySelector('#reflexo-grid');
+    const statusEl = container.querySelector('#reflexo-status');
+    const TOTAL_CELULAS = 9;
+
+    let pontos, celulaAtiva = -1, intervaloAlvo, intervaloRelogio, tempoRestante, jogando;
+
+    function desenharGrid() {
+        grid.innerHTML = '';
+        for (let i = 0; i < TOTAL_CELULAS; i++) {
+            const cel = document.createElement('div');
+            cel.className = 'reflexo-celula' + (i === celulaAtiva ? ' ativa' : '');
+            cel.innerText = i === celulaAtiva ? '🎯' : '';
+            cel.addEventListener('click', () => acertar(i));
+            grid.appendChild(cel);
+        }
+    }
+    function novoAlvo() {
+        celulaAtiva = Math.floor(Math.random() * TOTAL_CELULAS);
+        desenharGrid();
+    }
+    function acertar(indice) {
+        if (!jogando || indice !== celulaAtiva) return;
+        pontos++;
+        statusEl.innerText = 'Pontos: ' + pontos + '  |  Tempo: ' + tempoRestante + 's';
+        novoAlvo();
+    }
+    function terminar() {
+        jogando = false;
+        clearInterval(intervaloAlvo);
+        clearInterval(intervaloRelogio);
+        celulaAtiva = -1;
+        desenharGrid();
+        statusEl.innerText = '⏱️ Tempo esgotado! Pontuação final: ' + pontos;
+    }
+    function comecar() {
+        pontos = 0; tempoRestante = 30; jogando = true;
+        statusEl.innerText = 'Pontos: 0  |  Tempo: 30s';
+        novoAlvo();
+        intervaloAlvo = setInterval(novoAlvo, 900);
+        intervaloRelogio = setInterval(() => {
+            tempoRestante--;
+            if (tempoRestante <= 0) { terminar(); return; }
+            statusEl.innerText = 'Pontos: ' + pontos + '  |  Tempo: ' + tempoRestante + 's';
+        }, 1000);
+    }
+
+    desenharGrid();
+    container.querySelector('#reflexo-comecar').addEventListener('click', comecar);
+
+    return function parar() {
+        clearInterval(intervaloAlvo);
+        clearInterval(intervaloRelogio);
+    };
+}
+
+// Retorna o objeto cuja ".position" representa a posição real do jogador no
+// mundo — muda dependendo se é celular (cameraContainer) ou PC (a própria
+// câmera, via PointerLockControls.getObject()). Ver comentários lá em cima
+// sobre a diferença entre os dois sistemas de câmera.
+function obterAncoraCamera() {
+    return ehTouch ? cameraContainer.position : controles.getObject().position;
+}
+
+// Entra no carro: o jogador passa a "ser" o carro (WASD dirige, câmera fica
+// dentro dele) até apertar E de novo. A posição de antes de entrar é guardada
+// só por segurança/depuração (não usada pra restaurar — ao sair, o jogador
+// aparece do lado do carro, ver sairDoCarro).
+function entrarNoCarro(dadosCarro) {
+    if (dirigindoCarro || menuCraftingAberto || menuLojaAberto || menuTVAberto) return;
+
+    dirigindoCarro = true;
+    carroAtual = dadosCarro;
+    posicaoAntesDeDirigir.copy(obterAncoraCamera());
+
+    velocidade.set(0, 0, 0);
+    pararSonsDeMovimento();
+
+    mostrarNotificacao('🚗 Você entrou no carro! W/A/S/D para dirigir — pressione E para sair.', '#38bdf8');
+}
+
+// Sai do carro: posiciona o jogador de pé, do lado do carro (não no meio dele),
+// já na altura certa do terreno naquele ponto.
+function sairDoCarro() {
+    if (!dirigindoCarro || !carroAtual) return;
+
+    const grupo = carroAtual.grupo;
+    const ladoOffset = new THREE.Vector3(2.6, 0, 0);
+    ladoOffset.applyAxisAngle(eixoY, carroAtual.direcaoY);
+
+    const destinoX = grupo.position.x + ladoOffset.x;
+    const destinoZ = grupo.position.z + ladoOffset.z;
+    const destinoY = obterAlturaTerreno(destinoX, destinoZ) + ALTURA_JOGADOR;
+
+    const ancora = obterAncoraCamera();
+    ancora.set(destinoX, destinoY, destinoZ);
+    camera.position.set(0, 0, 0); // zera qualquer offset de bobbing acumulado
+
+    dirigindoCarro = false;
+    carroAtual = null;
+    podeSaltar = true;
+
+    mostrarNotificacao('Você saiu do carro.', '#9ca3af');
+}
+
+// Liga/desliga os faróis do carro que está sendo dirigido no momento — tecla
+// F, só funciona enquanto dirigindoCarro é true (fora do carro, F continua
+// controlando a lanterna do jogador, ver o switch de KeyF). Acende tanto a
+// luz de verdade (SpotLight, ilumina o caminho) quanto o brilho visual da
+// caixinha do farol (emissiveIntensity).
+function alternarFaroisCarro() {
+    if (!dirigindoCarro || !carroAtual) return;
+
+    const grupo = carroAtual.grupo;
+    const luzes = grupo.userData.luzesFarol;
+    if (!luzes || luzes.length === 0) return;
+
+    grupo.userData.farolLigado = !grupo.userData.farolLigado;
+    const ligado = grupo.userData.farolLigado;
+
+    luzes.forEach(luz => { luz.intensity = ligado ? 2.6 : 0; });
+    if (grupo.userData.matFarol) {
+        grupo.userData.matFarol.emissiveIntensity = ligado ? 2.2 : 0.6;
+    }
+
+    if (somLanterna && somLanterna.buffer) somLanterna.play();
+    mostrarNotificacao(ligado ? '🚗 Faróis ligados' : '🚗 Faróis desligados', '#38bdf8');
+}
+
+// Física + câmera do carro, chamada todo frame (dentro de animar()) enquanto
+// dirigindoCarro é true, no lugar da física normal de andar do jogador.
+// Reaproveita as mesmas variáveis de input do jogador (moverFrente, moverTras,
+// moverEsquerda, moverDireita) — tanto teclado quanto joystick do celular já
+// alimentam essas variáveis, então dirigir funciona nos dois.
+const VELOCIDADE_MAX_CARRO = 34.0;      // bem mais rápido que a corrida do jogador (~15.3)
+const VELOCIDADE_MAX_CARRO_RE = 14.0;
+const ACELERACAO_CARRO = 22.0;
+const FREIO_CARRO = 34.0;
+const ATRITO_CARRO = 9.0;
+const VELOCIDADE_VIRAR_CARRO = 1.9;     // rad/s, escalado pela velocidade atual
+const DIST_CAMERA_TRAS_CARRO = 7.0;     // quão longe a câmera fica atrás do carro
+const ALTURA_CAMERA_CARRO = 3.0;        // quão alto a câmera fica acima do carro
+
+function atualizarDirecaoCarro(delta) {
+    const grupo = carroAtual.grupo;
+
+    // Acelerar / Frear / Ré
+    if (moverFrente) {
+        carroAtual.velocidade = Math.min(carroAtual.velocidade + ACELERACAO_CARRO * delta, VELOCIDADE_MAX_CARRO);
+    } else if (moverTras) {
+        const freando = carroAtual.velocidade > 0;
+        const taxa = freando ? FREIO_CARRO : ACELERACAO_CARRO;
+        carroAtual.velocidade = Math.max(carroAtual.velocidade - taxa * delta, -VELOCIDADE_MAX_CARRO_RE);
+    } else {
+        // Atrito natural (solta os dois pedais)
+        if (carroAtual.velocidade > 0) carroAtual.velocidade = Math.max(0, carroAtual.velocidade - ATRITO_CARRO * delta);
+        else if (carroAtual.velocidade < 0) carroAtual.velocidade = Math.min(0, carroAtual.velocidade + ATRITO_CARRO * delta);
+    }
+
+    // Virar: só gira de verdade se o carro estiver em movimento (como um carro real)
+    const fatorVirada = THREE.MathUtils.clamp(Math.abs(carroAtual.velocidade) / 6.0, 0, 1);
+    let inputVirar = 0;
+    if (moverEsquerda) inputVirar += 1;
+    if (moverDireita) inputVirar -= 1;
+    const sentido = carroAtual.velocidade < 0 ? -1 : 1; // em ré, vira ao contrário
+    carroAtual.direcaoY += inputVirar * VELOCIDADE_VIRAR_CARRO * fatorVirada * sentido * delta;
+
+    // Move na direção que o carro está olhando
+    const deslocX = -Math.sin(carroAtual.direcaoY) * carroAtual.velocidade * delta;
+    const deslocZ = -Math.cos(carroAtual.direcaoY) * carroAtual.velocidade * delta;
+    const novoX = grupo.position.x + deslocX;
+    const novoZ = grupo.position.z + deslocZ;
+
+    if (!colideCarro(novoX, novoZ, 2.5)) {
+        grupo.position.x = novoX;
+        grupo.position.z = novoZ;
+    } else {
+        carroAtual.velocidade *= -0.25; // bate e ricocheteia levemente
+    }
+
+    // Segue o relevo do terreno (flutua suavemente na água, como um barco improvisado)
+    const alturaChaoCarro = obterAlturaTerreno(grupo.position.x, grupo.position.z);
+    const naAguaCarro = alturaChaoCarro <= NIVEL_DA_AGUA;
+    const alturaAlvoCarro = alturaChaoCarro + (naAguaCarro ? 0.15 : 0.35);
+    grupo.position.y = THREE.MathUtils.lerp(grupo.position.y, alturaAlvoCarro, Math.min(1, 10 * delta));
+    if (naAguaCarro) carroAtual.velocidade *= 0.97; // desacelera bastante na água
+
+    grupo.rotation.y = carroAtual.direcaoY;
+
+    // Mantém o colisor do carro (em objetosMundo) grudado na posição visual dele
+    carroAtual.colisor.x = grupo.position.x;
+    carroAtual.colisor.z = grupo.position.z;
+    carroAtual.colisor.topoY = grupo.position.y + 1.6;
+
+    // Rodas girando (rolagem) + rodas da frente esterçando visualmente
+    if (grupo.userData.rodasGirando) {
+        // CORREÇÃO: o pneu foi deitado com rotateZ(90°) na criação (ver
+        // criarModeloCarro), o que faz o eixo/cubo da roda apontar pro seu
+        // próprio eixo Y local. Girar em rotateX fazia a roda "tombar" de
+        // lado; o giro correto (rolar pra frente) é em torno desse Y local.
+        grupo.userData.rodasGirando.forEach(pneu => pneu.rotateY(-carroAtual.velocidade * delta * 1.6));
+    }
+    if (grupo.userData.rodasDianteiras) {
+        grupo.userData.rodasDianteiras.forEach(g => { g.rotation.y = inputVirar * 0.5; });
+    }
+
+    // Câmera: terceira pessoa, atrás do carro (vendo a traseira dele), com uma
+    // suavização leve pra não "tremer" em freadas/curvas bruscas. Como agora
+    // fixamos a rotação da câmera pra sempre olhar na direção do carro,
+    // o mouse fica travado enquanto dirige (volta ao normal ao sair).
+    const alvoX = grupo.position.x + Math.sin(carroAtual.direcaoY) * DIST_CAMERA_TRAS_CARRO;
+    const alvoZ = grupo.position.z + Math.cos(carroAtual.direcaoY) * DIST_CAMERA_TRAS_CARRO;
+    const alvoY = grupo.position.y + ALTURA_CAMERA_CARRO;
+
+    const ancora = obterAncoraCamera();
+    const fatorSuavizacaoCam = 1 - Math.exp(-8 * delta);
+    ancora.x = THREE.MathUtils.lerp(ancora.x, alvoX, fatorSuavizacaoCam);
+    ancora.y = THREE.MathUtils.lerp(ancora.y, alvoY, fatorSuavizacaoCam);
+    ancora.z = THREE.MathUtils.lerp(ancora.z, alvoZ, fatorSuavizacaoCam);
+
+    camera.rotation.set(-0.16, carroAtual.direcaoY, 0, 'YXZ');
+}
+
+// Checa se o carro bateria em algo (árvore, rocha, casa, cerca, outro carro
+// etc.) se se movesse pro ponto (x, z). Reaproveita a mesma lista de
+// colisores usada para o jogador a pé (objetosMundo), ignorando o colisor do
+// próprio carro que está sendo dirigido.
+function colideCarro(x, z, raioCarro) {
+    for (let i = 0; i < objetosMundo.length; i++) {
+        const obj = objetosMundo[i];
+        if (obj.dadosCarroRef === carroAtual) continue;
+
+        if (obj.isCasaConstruida) {
+            const dx = x - obj.x, dz = z - obj.z;
+            const raioAprox = Math.max(obj.w, obj.d) / 2 + raioCarro;
+            if (dx * dx + dz * dz < raioAprox * raioAprox) return true;
+        } else if (obj.isBox) {
+            if (x > obj.minX - raioCarro && x < obj.maxX + raioCarro && z > obj.minZ - raioCarro && z < obj.maxZ + raioCarro) return true;
+        } else {
+            const dx = x - obj.x, dz = z - obj.z;
+            const raioTotal = (obj.raio || 0.6) + raioCarro;
+            if (dx * dx + dz * dz < raioTotal * raioTotal) return true;
+        }
+    }
+    return false;
+}
+
+// Compra um produto do computador (aba "Comprar Produtos"): cobra o preço em
+// dinheiro e entrega 1 unidade como "planta_<tipo>" no inventário, pronta pra
+// ser equipada e posicionada no mundo pelo mesmo sistema de holograma das
+// construções.
+window.comprarProduto = function (tipo) {
+    const produto = PRODUTOS_LOJA[tipo];
+    if (!produto) return;
+
+    if (dinheiroJogador < produto.preco) {
+        mostrarNotificacao('Dinheiro insuficiente! Você precisa de ' + formatarDinheiro(produto.preco) + '.', '#ef4444');
+        return;
+    }
+
+    const chaveItem = 'planta_' + tipo;
+    if (!registrarItemNaHotbar(chaveItem, true)) return;
+
+    dinheiroJogador -= produto.preco;
+    inventario[chaveItem] = (inventario[chaveItem] || 0) + 1;
+
+    if (tipo === 'carro') {
+        filaCoresCarro.push(corCarroSelecionada);
+    }
+
+    atualizarDinheiroUI();
+    atualizarUIAktiv();
+    atualizarUILoja();
+    mostrarNotificacao('🚗 ' + produto.nome + ' comprado! Equipe-o no inventário e posicione no mundo.', '#22c55e');
+};
+
+// Atualiza a aba "Comprar Produtos": quantidade que o jogador já possui de
+// cada produto e se o botão de compra deve ficar desabilitado (sem dinheiro).
+function atualizarUICompras() {
+    Object.keys(PRODUTOS_LOJA).forEach(tipo => {
+        const produto = PRODUTOS_LOJA[tipo];
+        const elPossui = document.getElementById('loja-possui-' + tipo);
+        if (elPossui) elPossui.innerText = inventario['planta_' + tipo] || 0;
+
+        const semDinheiro = dinheiroJogador < produto.preco;
+        const elItem = document.getElementById('loja-produto-' + tipo);
+        if (elItem) elItem.classList.toggle('indisponivel', semDinheiro);
+
+        const btn = document.getElementById('loja-btn-comprar-' + tipo);
+        if (btn) btn.disabled = semDinheiro;
+    });
+}
+
 function executarConstrucaoReal() {
     if (!hologramaVisual || !hologramaVisual.visible) return;
     const posAlvo = hologramaVisual.position.clone();
@@ -1440,6 +2572,17 @@ function executarConstrucaoReal() {
             return;
         }
     }
+
+    // Marca o "tamanho" de cada lista auxiliar ANTES de criar a construção, pra
+    // depois conseguir descobrir exatamente o que foi adicionado por ela (e
+    // então remover tudo de uma vez se o jogador demolir essa construção).
+    const snapshot = {
+        raycast: objetosRaycast.length,
+        mundo: objetosMundo.length,
+        escadas: listaEscadas.length,
+        fogueiras: listaFogueirasDinamicas.length,
+        portas: todasAsPortas.length
+    };
 
     // Identifica o que construir e executa a função correta
     if (tipoCasaParaConstruir === 'fogueira') {
@@ -1492,10 +2635,58 @@ function executarConstrucaoReal() {
     } else if (tipoCasaParaConstruir === 'lareira') {
         construirLareiraFisica(posAlvo.x, posAlvo.y, posAlvo.z, anguloRotacaoHolograma);
         objetosMundo.push({ x: posAlvo.x, z: posAlvo.z, raio: 0.9, topoY: posAlvo.y + 1.7 });
+    } else if (tipoCasaParaConstruir === 'carro') {
+        // Usa a cor escolhida na hora da compra (fila FIFO); se por algum
+        // motivo não tiver nenhuma guardada, cai pra cor aleatória de sempre.
+        const corDoCarro = filaCoresCarro.length > 0 ? filaCoresCarro.shift() : null;
+        const carroReal = criarModeloCarro(corDoCarro);
+        carroReal.position.set(posAlvo.x, posAlvo.y, posAlvo.z);
+        carroReal.rotation.y = anguloRotacaoHolograma;
+        cena.add(carroReal);
+        objetosRaycast.push(carroReal);
+
+        const infoColisaoCarro = { x: posAlvo.x, z: posAlvo.z, raio: 2.5, topoY: posAlvo.y + 1.6 };
+        objetosMundo.push(infoColisaoCarro);
+
+        const dadosCarro = {
+            grupo: carroReal,
+            colisor: infoColisaoCarro,
+            velocidade: 0,
+            direcaoY: anguloRotacaoHolograma
+        };
+        infoColisaoCarro.dadosCarroRef = dadosCarro;
+        carroReal.traverse(obj => { obj.userData.dadosCarro = dadosCarro; });
+        carrosNoMundo.push(dadosCarro);
+    } else if (tipoCasaParaConstruir === 'tv') {
+        const tvReal = criarModeloTV();
+        tvReal.position.set(posAlvo.x, posAlvo.y, posAlvo.z);
+        tvReal.rotation.y = anguloRotacaoHolograma;
+        cena.add(tvReal);
+        objetosRaycast.push(tvReal);
+
+        objetosMundo.push({ x: posAlvo.x, z: posAlvo.z, raio: 0.65, topoY: posAlvo.y + 1.3 });
+
+        // Marca todos os meshes da TV com essa flag pra processarInteracaoGeral
+        // reconhecer que "olhar + apertar E" aqui deve abrir o menu de filmes.
+        tvReal.traverse(obj => { obj.userData.dadosTV = true; });
     } else {
         // Se não for nenhum dos anteriores, constrói uma casa (p, m ou g)
         construirCasaDetalhada(tipoCasaParaConstruir, posAlvo.x, posAlvo.y, posAlvo.z, anguloRotacaoHolograma);
     }
+
+    // Junta tudo que foi criado nesta construção (comparando com o snapshot de
+    // antes) e guarda como um único registro demolível.
+    const registro = {
+        tipo: tipoCasaParaConstruir,
+        material: MATERIAL_POR_CONSTRUCAO[tipoCasaParaConstruir] || 'madeira',
+        raycastObjs: objetosRaycast.slice(snapshot.raycast),
+        mundoObjs: objetosMundo.slice(snapshot.mundo),
+        escadasObjs: listaEscadas.slice(snapshot.escadas),
+        fogueirasObjs: listaFogueirasDinamicas.slice(snapshot.fogueiras),
+        portasObjs: todasAsPortas.slice(snapshot.portas)
+    };
+    registro.raycastObjs.forEach(obj => { if (obj && obj.userData) obj.userData.construcaoInfo = registro; });
+    construcoesColocadas.push(registro);
 
     // Remove 1 planta do inventário
     inventario['planta_' + tipoCasaParaConstruir]--;
@@ -1507,8 +2698,91 @@ function executarConstrucaoReal() {
 
     atualizarUIAktiv();
 }
-// --- LOOP DE ANIMAÇÃO PRINCIPAL ---
+
+// Demole uma construção (registrada em executarConstrucaoReal): tira tudo o
+// que ela criou do mundo/listas auxiliares e devolve 1 planta pro inventário
+// — o inverso exato do que foi gasto para colocá-la.
+function demolirConstrucao(registro) {
+    registro.raycastObjs.forEach(obj => {
+        if (!obj) return;
+        cena.remove(obj);
+        const iRay = objetosRaycast.indexOf(obj);
+        if (iRay > -1) objetosRaycast.splice(iRay, 1);
+
+        // CORREÇÃO (vazamento de memória): cena.remove() só tira o objeto da
+        // cena, mas a geometria e o material continuam ocupando memória da
+        // GPU até serem descartados manualmente. Cada construção cria seus
+        // próprios materiais (não são compartilhados entre construções),
+        // então é seguro liberar aqui sempre que o jogador demole algo.
+        obj.traverse(filho => {
+            if (filho.isMesh) {
+                if (filho.geometry) filho.geometry.dispose();
+                if (filho.material) {
+                    if (Array.isArray(filho.material)) filho.material.forEach(m => m.dispose());
+                    else filho.material.dispose();
+                }
+            }
+        });
+    });
+    registro.mundoObjs.forEach(colisor => {
+        const iMundo = objetosMundo.indexOf(colisor);
+        if (iMundo > -1) objetosMundo.splice(iMundo, 1);
+    });
+    registro.escadasObjs.forEach(escada => {
+        const iEsc = listaEscadas.indexOf(escada);
+        if (iEsc > -1) listaEscadas.splice(iEsc, 1);
+    });
+    registro.fogueirasObjs.forEach(fogueira => {
+        const iFog = listaFogueirasDinamicas.indexOf(fogueira);
+        if (iFog > -1) listaFogueirasDinamicas.splice(iFog, 1);
+
+        // CORREÇÃO (quadradinhos parados no ar ao demolir fogueira/lareira):
+        // a luz (PointLight) e o sistema de partículas do fogo eram criados
+        // com cena.add() direto (ver construirFogueiraFisica/construirLareiraFisica),
+        // mas nunca ficavam registrados em raycastObjs nem em nenhuma outra
+        // lista limpa aqui. Tirar a fogueira só da listaFogueirasDinamicas
+        // parava a ANIMAÇÃO das partículas (elas somem do loop em animar()),
+        // mas os pontos e a luz continuavam presos na cena pra sempre,
+        // "congelados" no ar. Agora removemos os dois da cena e liberamos a
+        // geometria/material das partículas (evita vazamento de memória).
+        if (fogueira.sistemaParticulas) {
+            cena.remove(fogueira.sistemaParticulas);
+            fogueira.sistemaParticulas.geometry.dispose();
+            fogueira.sistemaParticulas.material.dispose();
+        }
+        if (fogueira.luz) {
+            cena.remove(fogueira.luz);
+        }
+    });
+    registro.portasObjs.forEach(porta => {
+        const iPorta = todasAsPortas.indexOf(porta);
+        if (iPorta > -1) todasAsPortas.splice(iPorta, 1);
+    });
+
+    const iRegistro = construcoesColocadas.indexOf(registro);
+    if (iRegistro > -1) construcoesColocadas.splice(iRegistro, 1);
+
+    inventario['planta_' + registro.tipo] = (inventario['planta_' + registro.tipo] || 0) + 1;
+    atualizarUIAktiv();
+
+    // O item devolvido é sempre de um tipo que já tinha espaço reservado na
+    // hotbar (ele só existe porque já foi craftado antes), então nunca causa
+    // estouro do limite de 10. Ainda assim, se os 10 espaços já estiverem
+    // todos ocupados por outros tipos, avisa o jogador que o inventário
+    // continua cheio (ele não vai conseguer craftar nenhum tipo novo).
+    if (hotbar.indexOf(null) === -1) {
+        mostrarNotificacao('Construção demolida! Item devolvido ao inventário. Atenção: inventário cheio (10/10 tipos).', '#f59e0b');
+    } else {
+        mostrarNotificacao('Construção demolida! Item devolvido ao inventário.', '#22c55e');
+    }
+}
 const relogio = new THREE.Clock(); let tempoCiclo = 0.5;
+
+// PERFORMANCE: contadores usados para não repetir, todo frame, duas operações
+// caras (raycast de interação e recálculo de sombras) — ver função animar().
+let contadorFrameInteracao = 0;
+let interseccoesCache = [];
+let contadorFrameSombra = 0;
 
 function animar() {
     requestAnimationFrame(animar); const delta = Math.min(relogio.getDelta(), 0.1);
@@ -1531,20 +2805,34 @@ function animar() {
         porta.rotation.y = THREE.MathUtils.lerp(porta.rotation.y, alvo, 10 * delta);
     });
 
-    raycaster.setFromCamera(vetorCentroTela, camera);
-    const interseccoes = raycaster.intersectObjects(objetosRaycast, true);
+    // PERFORMANCE: o raycast (que detecta árvore/rocha/construção/porta mirada)
+    // é uma operação relativamente cara — sobretudo contra o terreno, que tem
+    // muitos triângulos — e não precisa ser recalculado 60x/s pra parecer
+    // instantâneo. Recalcula a cada 2 frames e reaproveita o resultado no frame
+    // do meio; a diferença é imperceptível pro jogador.
+    contadorFrameInteracao++;
+    if (contadorFrameInteracao % 2 === 0) {
+        raycaster.setFromCamera(vetorCentroTela, camera);
+        interseccoesCache = raycaster.intersectObjects(objetosRaycast, true);
+    }
+    const interseccoes = interseccoesCache;
 
     let achouObjetoPerto = false, promptTexto = "Pressione E para Interagir", arvoreOlhada = null, rochaOlhada = null;
+    construcaoOlhada = null;
 
     if (interseccoes.length > 0 && interseccoes[0].distance < 4.0) {
         let objOcular = interseccoes[0].object;
         if (objOcular === mesaTrabalhoMesh || objOcular.parent === mesaTrabalhoMesh) { achouObjetoPerto = true; promptTexto = "Pressione E para usar a Mesa de Trabalho"; }
+        else if (objOcular === escrivaninhaMesh || objOcular.parent === escrivaninhaMesh) { achouObjetoPerto = true; promptTexto = "Pressione E para usar o Computador"; }
         else {
             let cur = objOcular;
             while (cur && cur.type !== 'Scene') {
+                if (cur.userData && cur.userData.dadosCarro) { achouObjetoPerto = true; promptTexto = "Pressione E para Entrar no Carro"; break; }
+                if (cur.userData && cur.userData.dadosTV) { achouObjetoPerto = true; promptTexto = "Pressione E para Ligar a TV"; break; }
                 if (cur.userData && cur.userData.ePorta) { achouObjetoPerto = true; promptTexto = "Pressione E para abrir/fechar a Porta"; break; }
                 if (cur.userData && cur.userData.dadosArvore) { arvoreOlhada = cur.userData.dadosArvore; break; }
                 if (cur.userData && cur.userData.dadosRocha) { rochaOlhada = cur.userData.dadosRocha; break; }
+                if (cur.userData && cur.userData.construcaoInfo) { construcaoOlhada = cur.userData.construcaoInfo; break; }
                 cur = cur.parent;
             }
         }
@@ -1617,6 +2905,21 @@ function animar() {
             estaMinando = false; tempoSegurandoClique = 0; rochaSendoMinerada = null; if (barraProgressoContainer) barraProgressoContainer.style.display = 'none';
         }
     }
+    // Demolição de construções: machado derruba as de madeira, picareta as de pedra.
+    else if (construcaoOlhada && estaMinando &&
+        ((construcaoOlhada.material === 'madeira' && itemAtivo === 'machado') ||
+            (construcaoOlhada.material === 'pedra' && itemAtivo === 'picareta'))) {
+        if (construcaoSendoDemolida !== construcaoOlhada) { construcaoSendoDemolida = construcaoOlhada; tempoSegurandoClique = 0; }
+        tempoSegurandoClique += delta;
+        const TEMPO_DEMOLICAO = 2.5;
+        if (barraProgressoContainer && barraProgressoContainer.style.display !== 'block') barraProgressoContainer.style.display = 'block';
+        if (barraProgressoPreenchimento) barraProgressoPreenchimento.style.width = Math.min(100, (tempoSegurandoClique / TEMPO_DEMOLICAO * 100)) + '%';
+
+        if (tempoSegurandoClique >= TEMPO_DEMOLICAO) {
+            demolirConstrucao(construcaoSendoDemolida);
+            estaMinando = false; tempoSegurandoClique = 0; construcaoSendoDemolida = null; if (barraProgressoContainer) barraProgressoContainer.style.display = 'none';
+        }
+    }
 
     let pertoDeEscada = false;
     const posJEscada = controles.getObject().position;
@@ -1641,6 +2944,14 @@ function animar() {
     if (!pertoDeEscada && promptInteracao) {
         promptInteracao.style.display = achouObjetoPerto ? 'block' : 'none';
         promptInteracao.innerText = promptTexto;
+    }
+
+    // Enquanto dirige, o prompt sempre mostra a opção de sair (a câmera fica
+    // travada olhando pro carro em terceira pessoa, então não faz sentido
+    // basear isso no raycast central da tela).
+    if (dirigindoCarro && promptInteracao) {
+        promptInteracao.style.display = 'block';
+        promptInteracao.innerText = 'Pressione E para Sair do Carro';
     }
 
     if (modoConstrucaoAtivo && hologramaVisual) {
@@ -1721,6 +3032,11 @@ function animar() {
     });
 
   // --- COMECE A SUBSTITUIR A PARTIR DAQUI ---
+  if (dirigindoCarro && carroAtual) {
+    // Enquanto estiver dirigindo, a física normal do jogador (andar, gravidade,
+    // colisão a pé, bobbing) fica toda pausada — quem se move é o carro.
+    atualizarDirecaoCarro(delta);
+  } else {
     velocidade.x -= velocidade.x * 10.0 * delta; 
     velocidade.z -= velocidade.z * 10.0 * delta; 
     velocidade.y -= GRAVIDADE * delta; 
@@ -1877,7 +3193,13 @@ function animar() {
         bobAtualY = alvoBobY; bobAtualX = alvoBobX;
         pararSonsDeMovimento();
     }
+  } // fecha o "else" de "if (dirigindoCarro && carroAtual)" lá de cima
 
+
+    // PERFORMANCE: dispara o recálculo do shadow map manualmente a cada 2
+    // frames (autoUpdate está desligado lá na criação do renderizador).
+    contadorFrameSombra++;
+    if (contadorFrameSombra % 2 === 0) renderizador.shadowMap.needsUpdate = true;
 
     renderizador.render(cena, camera);
 }
@@ -1889,7 +3211,7 @@ let mochilaAberta = false;
 const mochilaContainer = document.getElementById('mochila-container');
 
 function alternarMochila() {
-    if (menuCraftingAberto) return; // Não abre se estiver na mesa de trabalho
+    if (menuCraftingAberto || menuLojaAberto || menuTVAberto) return; // Não abre se estiver na mesa de trabalho, no computador ou na TV
 
     mochilaAberta = !mochilaAberta;
     if (mochilaAberta) {
@@ -1908,6 +3230,166 @@ document.getElementById('btn-mochila-mobile')?.addEventListener('touchstart', (e
     e.preventDefault();
     alternarMochila();
 });
+
+// ============================================================
+// SISTEMA DE VENDA DE RECURSOS (ESCRIVANINHA / COMPUTADOR)
+// ============================================================
+function formatarDinheiro(valor) {
+    return '$' + valor.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function atualizarDinheiroUI() {
+    if (dinheiroHudEl) dinheiroHudEl.innerText = formatarDinheiro(dinheiroJogador);
+}
+
+// Mantém os números da mochila (🪵🪨 + ferro/cobre/ouro) sincronizados com o
+// inventário depois de qualquer operação de venda.
+function sincronizarQuantidadesMochila() {
+    Object.keys(PRECOS_RECURSOS).forEach(recurso => {
+        const elMochila = document.getElementById('txt-qtd-' + recurso);
+        if (elMochila) elMochila.innerText = inventario[recurso] || 0;
+    });
+}
+
+function calcularTotalCarrinho() {
+    return Object.keys(carrinhoVenda).reduce((total, recurso) => total + (carrinhoVenda[recurso] * PRECOS_RECURSOS[recurso]), 0);
+}
+
+// Redesenha a listinha de itens já adicionados à venda + o total.
+function renderizarCarrinhoVenda() {
+    const lista = document.getElementById('loja-carrinho-lista');
+    const totalEl = document.getElementById('loja-total-valor');
+    const btnFecharVenda = document.getElementById('btn-fechar-venda');
+    if (!lista) return;
+
+    lista.innerHTML = '';
+    let temItens = false;
+
+    Object.keys(carrinhoVenda).forEach(recurso => {
+        const qtd = carrinhoVenda[recurso];
+        if (qtd <= 0) return;
+        temItens = true;
+
+        const subtotal = qtd * PRECOS_RECURSOS[recurso];
+        const linha = document.createElement('div');
+        linha.className = 'carrinho-linha';
+        linha.innerHTML = '<span class="carrinho-nome">' + NOMES_RECURSOS[recurso] + ' x ' + qtd + '</span>' +
+            '<span class="carrinho-subtotal">' + formatarDinheiro(subtotal) + '</span>' +
+            '<button class="btn-carrinho-remover" onclick="removerRecursoDoCarrinho(\'' + recurso + '\')" aria-label="Remover">✕</button>';
+        lista.appendChild(linha);
+    });
+
+    if (!temItens) {
+        lista.innerHTML = '<div class="carrinho-vazio">Nenhum item adicionado ainda.</div>';
+    }
+
+    if (totalEl) totalEl.innerText = formatarDinheiro(calcularTotalCarrinho());
+    if (btnFecharVenda) btnFecharVenda.disabled = !temItens;
+}
+
+// Atualiza tudo que a tela do computador mostra: quantidade disponível de
+// cada recurso na mochila, os inputs, e o carrinho de venda.
+function atualizarUILoja() {
+    Object.keys(PRECOS_RECURSOS).forEach(recurso => {
+        const elDisp = document.getElementById('loja-disp-' + recurso);
+        if (elDisp) elDisp.innerText = inventario[recurso] || 0;
+
+        const elInput = document.getElementById('loja-input-' + recurso);
+        if (elInput) {
+            const maxDisponivel = inventario[recurso] || 0;
+            elInput.max = maxDisponivel;
+            if (parseInt(elInput.value || '0', 10) > maxDisponivel) elInput.value = maxDisponivel || '';
+        }
+
+        const elItem = document.getElementById('loja-item-' + recurso);
+        if (elItem) elItem.classList.toggle('indisponivel', (inventario[recurso] || 0) <= 0);
+    });
+
+    renderizarCarrinhoVenda();
+    atualizarUICompras();
+}
+
+// Move a quantidade digitada no campo do recurso, da mochila pro carrinho de venda.
+window.adicionarRecursoAVenda = function (recurso) {
+    const elInput = document.getElementById('loja-input-' + recurso);
+    if (!elInput) return;
+
+    const qtd = parseInt(elInput.value, 10);
+    if (!Number.isFinite(qtd) || qtd <= 0) {
+        mostrarNotificacao('Digite uma quantidade válida.', '#ef4444');
+        return;
+    }
+    if (qtd > (inventario[recurso] || 0)) {
+        mostrarNotificacao('Você não tem essa quantidade de ' + NOMES_RECURSOS[recurso] + '.', '#ef4444');
+        return;
+    }
+
+    inventario[recurso] -= qtd;
+    carrinhoVenda[recurso] += qtd;
+    elInput.value = '';
+
+    sincronizarQuantidadesMochila();
+    atualizarEstadoCraftingUI();
+    atualizarUILoja();
+    mostrarNotificacao(qtd + 'x ' + NOMES_RECURSOS[recurso] + ' adicionado à venda.', '#22c55e');
+};
+
+// Desiste de vender aquele recurso: devolve tudo que estava reservado no
+// carrinho de volta pra mochila.
+window.removerRecursoDoCarrinho = function (recurso) {
+    const qtd = carrinhoVenda[recurso];
+    if (!qtd) return;
+
+    inventario[recurso] = (inventario[recurso] || 0) + qtd;
+    carrinhoVenda[recurso] = 0;
+
+    sincronizarQuantidadesMochila();
+    atualizarEstadoCraftingUI();
+    atualizarUILoja();
+};
+
+// Fecha a venda de verdade: soma o valor total do carrinho ao dinheiro do
+// jogador (aparece na hora no HUD) e esvazia o carrinho.
+window.finalizarVenda = function () {
+    const total = calcularTotalCarrinho();
+    if (total <= 0) {
+        mostrarNotificacao('Adicione recursos à venda antes de fechar.', '#ef4444');
+        return;
+    }
+
+    dinheiroJogador += total;
+    Object.keys(carrinhoVenda).forEach(recurso => { carrinhoVenda[recurso] = 0; });
+
+    atualizarDinheiroUI();
+    atualizarUILoja();
+    mostrarNotificacao('Venda concluída! Você recebeu ' + formatarDinheiro(total) + '.', '#22c55e');
+};
+
+// Sai da tela do computador. Qualquer recurso ainda reservado no carrinho
+// (não vendido) volta automaticamente pra mochila, pra ninguém perder item.
+function fecharLoja() {
+    let devolveuAlgo = false;
+    Object.keys(carrinhoVenda).forEach(recurso => {
+        if (carrinhoVenda[recurso] > 0) {
+            inventario[recurso] = (inventario[recurso] || 0) + carrinhoVenda[recurso];
+            carrinhoVenda[recurso] = 0;
+            devolveuAlgo = true;
+        }
+    });
+    if (devolveuAlgo) sincronizarQuantidadesMochila();
+
+    menuLoja.style.display = 'none';
+    menuLojaAberto = false;
+    if (!ehTouch && controles) controles.lock();
+}
+
+document.getElementById('btn-fechar-venda')?.addEventListener('click', finalizarVenda);
+document.getElementById('btn-fechar-loja')?.addEventListener('click', fecharLoja);
+document.getElementById('btn-fechar-tv')?.addEventListener('click', fecharMenuTV);
+document.getElementById('btn-fechar-tv-jogo')?.addEventListener('click', fecharMenuTV);
+document.getElementById('btn-voltar-tv-jogo')?.addEventListener('click', fecharJogo);
+
+atualizarDinheiroUI();
 
 // --- CONTROLE DE CÂMERA POR TOQUE (CELULAR) ---
 // Toque no lado direito da tela = olhar ao redor (o esquerdo fica livre pro
@@ -1928,12 +3410,12 @@ let touchOlharAnteriorY = 0;
 // no joystick ou em algum menu/overlay aberto (mochila, crafting, pause etc).
 function toqueEmAreaDeUI(alvo) {
     if (!alvo || typeof alvo.closest !== 'function') return false;
-    return !!alvo.closest('#zona-joystick, #botoes-acao-mobile, .btn-touch, button, #menu-crafting, #mochila-container, .overlay-tela');
+    return !!alvo.closest('#zona-joystick, #botoes-acao-mobile, .btn-touch, button, input, #menu-crafting, #menu-loja, #menu-tv, #menu-tv-jogo, #mochila-container, .overlay-tela');
 }
 
 window.addEventListener('touchstart', (e) => {
     if (!jogoIniciado || jogoPausado || !ehTouch) return;
-    if (mochilaAberta || menuCraftingAberto) return;
+    if (mochilaAberta || menuCraftingAberto || menuLojaAberto || menuTVAberto) return;
 
     for (let i = 0; i < e.changedTouches.length; i++) {
         const touch = e.changedTouches[i];

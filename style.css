@@ -37,6 +37,16 @@ body {
     font-size: 18px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);
 }
 
+/* Fica no canto inferior esquerdo, mas um pouco acima do joystick do celular
+   (que também mora nesse canto) pra não sobrepor os dois no mobile. */
+#dinheiro-hud {
+    position: absolute; bottom: 190px; left: 20px;
+    background: rgba(0,0,0,0.65); color: #4ade80; font-weight: 800;
+    font-size: 1.05rem; padding: 9px 16px; border-radius: 8px;
+    border: 2px solid #22c55e; z-index: 10; font-family: sans-serif;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6); pointer-events: none;
+}
+
 #prompt-interacao {
     position: absolute; top: 60%; left: 50%; transform: translate(-50%, -50%);
     color: #fbbf24; background: rgba(0, 0, 0, 0.7); padding: 10px 20px;
@@ -189,6 +199,143 @@ body {
 .card-craft.indisponivel button:hover { transform: none; background: #4b5563; }
 
 .crafting-footer { text-align: center; font-size: 0.75rem; color: #9ca3af; padding: 0 22px 18px; }
+
+/* =========================================================
+   COMPUTADOR DE VENDAS (LOJA DE RECURSOS)
+   ========================================================= */
+#menu-loja {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: linear-gradient(180deg, rgba(31,41,55,0.97), rgba(15,20,30,0.98));
+    color: white; border-radius: 14px; border: 3px solid #38bdf8; display: none; z-index: 30;
+    width: min(94vw, 640px); max-height: 88vh; overflow-y: auto; box-sizing: border-box;
+    box-shadow: 0 0 40px rgba(0,0,0,0.85), 0 0 0 1px rgba(56,189,248,0.15) inset;
+}
+
+.loja-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 18px 22px 12px; border-bottom: 1px solid rgba(56,189,248,0.25);
+}
+.loja-header h2 { margin: 0; font-size: 1.2rem; letter-spacing: 0.5px; }
+
+.loja-abas { display: flex; gap: 8px; padding: 14px 22px 0; }
+.aba-loja {
+    flex: 1; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12);
+    color: #cbd5e1; padding: 9px 10px; border-radius: 9px; cursor: pointer;
+    font-weight: 700; font-size: 0.85rem; transition: all 0.15s;
+}
+.aba-loja:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.aba-loja.ativa {
+    background: linear-gradient(135deg, #38bdf8, #0ea5e9); color: #0c1a24; border-color: #38bdf8;
+    box-shadow: 0 4px 12px rgba(56,189,248,0.35);
+}
+
+.loja-comprar-info {
+    margin: 4px 22px 0; padding: 10px 12px; font-size: 0.78rem; line-height: 1.5; color: #cbd5e1;
+    background: rgba(56,189,248,0.08); border: 1px solid rgba(56,189,248,0.25); border-radius: 10px;
+}
+.loja-comprar-em-breve {
+    text-align: center; font-size: 0.8rem; color: #6b7280; font-style: italic; padding: 14px 22px 4px;
+}
+
+.loja-item.indisponivel { opacity: 0.5; }
+.loja-item-acao button:disabled {
+    background: #4b5563 !important; cursor: not-allowed; transform: none !important;
+}
+
+.loja-grid {
+    display: flex; flex-direction: column; gap: 10px; padding: 16px 22px 6px;
+}
+
+.loja-item {
+    display: flex; align-items: center; gap: 12px;
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px; padding: 10px 12px; transition: border-color 0.15s, background 0.15s;
+}
+.loja-item:hover { border-color: rgba(56,189,248,0.4); background: rgba(255,255,255,0.06); }
+.loja-item.indisponivel { opacity: 0.5; }
+
+.loja-item-icone {
+    width: 42px; height: 42px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.25); border-radius: 8px;
+}
+
+.loja-item-info { flex: 1; min-width: 0; }
+.loja-item-nome { font-weight: 700; font-size: 0.92rem; color: #f3f4f6; }
+.loja-item-preco { font-size: 0.78rem; color: #38bdf8; font-weight: 600; margin-top: 1px; }
+.loja-item-disponivel { font-size: 0.76rem; color: #9ca3af; margin-top: 1px; }
+
+.loja-item-acao { display: flex; gap: 6px; flex-shrink: 0; }
+.loja-input-qtd {
+    width: 64px; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.2);
+    color: white; border-radius: 6px; padding: 6px 8px; font-size: 0.85rem; text-align: center;
+}
+.loja-input-qtd:focus { outline: none; border-color: #38bdf8; }
+.loja-item-acao button {
+    background: linear-gradient(135deg, #0ea5e9, #0284c7); border: none; color: white;
+    padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.78rem;
+    transition: transform 0.15s, background 0.15s; white-space: nowrap;
+}
+.loja-item-acao button:hover { transform: scale(1.03); background: linear-gradient(135deg, #0284c7, #0369a1); }
+.loja-item-acao button:active { transform: scale(0.97); }
+
+.loja-item-carro { flex-direction: column; align-items: stretch; gap: 10px; }
+.loja-item-linha-topo { display: flex; align-items: center; gap: 12px; }
+
+.loja-cor-linha {
+    display: flex; align-items: center; gap: 10px;
+    padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.08);
+}
+.loja-cor-rotulo { font-size: 0.8rem; color: #9ca3af; font-weight: 600; flex-shrink: 0; }
+.paleta-cores-carro { display: flex; gap: 7px; flex-wrap: wrap; }
+.cor-opcao {
+    width: 24px; height: 24px; border-radius: 50%; cursor: pointer;
+    border: 2px solid rgba(255,255,255,0.25); padding: 0; transition: transform 0.12s, border-color 0.12s;
+}
+.cor-opcao:hover { transform: scale(1.15); }
+.cor-opcao.ativa {
+    border-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56,189,248,0.4);
+    transform: scale(1.12);
+}
+
+.loja-carrinho { padding: 14px 22px 4px; }
+.loja-carrinho h3 { margin: 0 0 10px; font-size: 1rem; color: #f3f4f6; }
+
+#loja-carrinho-lista {
+    display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto;
+    margin-bottom: 10px;
+}
+.carrinho-vazio { font-size: 0.82rem; color: #6b7280; font-style: italic; padding: 6px 2px; }
+
+.carrinho-linha {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px; padding: 7px 10px; font-size: 0.84rem;
+}
+.carrinho-nome { color: #e5e7eb; font-weight: 600; }
+.carrinho-subtotal { color: #4ade80; font-weight: 700; }
+.btn-carrinho-remover {
+    background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.5); color: #fca5a5;
+    width: 22px; height: 22px; border-radius: 6px; font-size: 12px; font-weight: bold;
+    cursor: pointer; line-height: 1; flex-shrink: 0; transition: background 0.15s;
+}
+.btn-carrinho-remover:hover { background: rgba(239,68,68,0.35); color: #fff; }
+
+.loja-total {
+    text-align: right; font-size: 1rem; font-weight: 800; color: #f3f4f6;
+    padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1);
+}
+.loja-total span { color: #4ade80; }
+
+.loja-acoes { padding: 14px 22px 4px; }
+.btn-principal-loja {
+    width: 100%; background: linear-gradient(135deg, #22c55e, #16a34a); border: none; color: white;
+    padding: 12px 16px; border-radius: 10px; cursor: pointer; font-weight: bold; font-size: 1rem;
+    transition: transform 0.15s, background 0.15s;
+}
+.btn-principal-loja:hover:not(:disabled) { transform: scale(1.02); background: linear-gradient(135deg, #16a34a, #15803d); }
+.btn-principal-loja:disabled { background: #4b5563; cursor: not-allowed; opacity: 0.6; }
+
+.loja-footer { text-align: center; font-size: 0.75rem; color: #9ca3af; padding: 12px 22px 18px; }
 
 #mochila-container {
     position: absolute;
@@ -399,3 +546,119 @@ body {
     from { opacity: 0; transform: scale(0.97); }
     to { opacity: 1; transform: scale(1); }
 }
+/* ============================================================ */
+/* TELEVISÃO: menu de minigames (grade de cards) + área do jogo */
+/* ============================================================ */
+#menu-tv {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: linear-gradient(180deg, rgba(20,22,28,0.97), rgba(10,11,15,0.98));
+    color: white; border-radius: 14px; border: 3px solid #a855f7; display: none; z-index: 32;
+    width: min(94vw, 760px); max-height: 88vh; overflow-y: auto; box-sizing: border-box;
+    box-shadow: 0 0 40px rgba(0,0,0,0.85), 0 0 0 1px rgba(168,85,247,0.15) inset;
+}
+.tv-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 18px 22px 14px; border-bottom: 1px solid rgba(168,85,247,0.25);
+    position: sticky; top: 0; background: inherit; z-index: 1;
+}
+.tv-header h2 { margin: 0; font-size: 1.2rem; letter-spacing: 0.5px; }
+.tv-footer { text-align: center; font-size: 0.78rem; color: #9ca3af; padding: 6px 22px 18px; }
+
+.tv-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 16px; padding: 20px 22px 8px;
+}
+.tv-card {
+    cursor: pointer; border-radius: 10px; overflow: hidden;
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1);
+    transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+    display: flex; flex-direction: column; align-items: center;
+}
+.tv-card:hover {
+    transform: translateY(-3px) scale(1.02); border-color: #a855f7;
+    box-shadow: 0 8px 20px rgba(168,85,247,0.35);
+}
+.tv-card-capa {
+    width: 100%; aspect-ratio: 4 / 3;
+    background: linear-gradient(160deg, #1f2230, #14161d);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 2.6rem;
+}
+.tv-card-titulo {
+    padding: 8px 9px 2px; font-size: 0.85rem; font-weight: 700; color: #f3f4f6;
+    text-align: center; line-height: 1.3;
+}
+.tv-card-descricao {
+    padding: 0 9px 12px; font-size: 0.72rem; color: #9ca3af;
+    text-align: center; line-height: 1.3;
+}
+
+#menu-tv-jogo {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: #0b0d12; border-radius: 14px; border: 3px solid #a855f7; display: none;
+    z-index: 33; width: min(96vw, 620px); box-sizing: border-box; overflow: hidden;
+    box-shadow: 0 0 50px rgba(0,0,0,0.9);
+}
+.tv-video-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 16px; background: rgba(20,22,28,0.95); color: #f3f4f6;
+    font-weight: 700; font-size: 0.95rem; gap: 12px;
+}
+.tv-video-botoes { display: flex; gap: 8px; align-items: center; }
+#btn-voltar-tv-jogo {
+    background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: #f3f4f6;
+    padding: 6px 12px; border-radius: 7px; cursor: pointer; font-size: 0.78rem; font-weight: 700;
+    transition: background 0.15s;
+}
+#btn-voltar-tv-jogo:hover { background: rgba(255,255,255,0.2); }
+
+#tv-jogo-area {
+    padding: 18px; display: flex; flex-direction: column; align-items: center; gap: 10px;
+    max-height: 76vh; overflow-y: auto; box-sizing: border-box;
+}
+
+/* Elementos compartilhados entre os minigames */
+.jogo-status { color: #f3f4f6; font-weight: 700; font-size: 0.95rem; text-align: center; }
+.jogo-dica { color: #9ca3af; font-size: 0.75rem; text-align: center; }
+.mini-jogo-canvas { background: #0f172a; border-radius: 8px; max-width: 100%; }
+.jogo-btn-reiniciar {
+    background: linear-gradient(135deg, #a855f7, #7c3aed); color: white; border: none;
+    padding: 9px 18px; border-radius: 8px; cursor: pointer; font-weight: 700; font-size: 0.85rem;
+    transition: transform 0.12s;
+}
+.jogo-btn-reiniciar:hover { transform: scale(1.04); }
+.jogo-btn-reiniciar:active { transform: scale(0.97); }
+
+/* Jogo da Velha */
+.velha-grid {
+    display: grid; grid-template-columns: repeat(3, 72px); grid-template-rows: repeat(3, 72px);
+    gap: 6px;
+}
+.velha-celula {
+    background: #1a1c23; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    font-size: 1.8rem; cursor: pointer; transition: background 0.12s;
+}
+.velha-celula:hover { background: #262a36; }
+
+/* Jogo da Memória */
+.memoria-grid {
+    display: grid; grid-template-columns: repeat(4, 62px); grid-template-rows: repeat(4, 62px);
+    gap: 6px;
+}
+.memoria-carta {
+    background: #1a1c23; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    font-size: 1.6rem; cursor: pointer; transition: background 0.12s, transform 0.12s;
+    color: #4b5563;
+}
+.memoria-carta.virada { background: #262a36; color: initial; transform: scale(1.03); }
+
+/* Reflexo (clique rápido) */
+.reflexo-grid {
+    display: grid; grid-template-columns: repeat(3, 76px); grid-template-rows: repeat(3, 76px);
+    gap: 6px;
+}
+.reflexo-celula {
+    background: #1a1c23; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    font-size: 1.8rem; cursor: pointer;
+}
+.reflexo-celula.ativa { background: #a855f7; }

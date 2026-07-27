@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-select=none">
     <title>Craft Print</title>
-    <link rel="stylesheet" href="style.css?v=8">
+    <link rel="stylesheet" href="style.css?v=11">
 
     <script>
         // DIAGNÓSTICO TEMPORÁRIO: mostra qualquer erro de JavaScript na tela
@@ -28,6 +28,8 @@
     <div id="crosshair"></div>
 
     <div id="notificacao">Mensagem</div>
+
+    <div id="dinheiro-hud">$0.00</div>
 
     <div id="barra-coleta-container">
         <div id="barra-coleta-progresso"></div>
@@ -75,6 +77,8 @@
                 <p><b>Tecla [E]:</b> Abrir Mesa de Crafting / Interagir</p>
                 <p><b>Tecla [B]:</b> Abrir Mochila</p>
                 <p><b>Teclas [R / T]:</b> Girar planta de construção</p>
+                <p><b>🚗 Carro:</b> Compre no Computador, posicione-o no mundo e pressione [E] perto dele para entrar. W/A/S/D dirige, [F] liga/desliga os faróis, [E] sai.</p>
+                <p><b>📺 Televisão:</b> Compre no Computador, posicione-a no mundo e pressione [E] perto dela pra ligar e escolher um minigame (cobrinha, jogo da velha, memória, pong e reflexo).</p>
                 <p><b>ESC:</b> Pausar o jogo / Menu</p>
             </div>
             <button id="btn-fechar-controles" class="btn-secundario">Fechar</button>
@@ -222,6 +226,174 @@
         <div class="crafting-footer">Pressione <b>E</b> ou <b>ESC</b> para fechar</div>
     </div>
 
+    <div id="menu-loja">
+        <div class="loja-header">
+            <h2>🖥️ Computador de Vendas</h2>
+            <button id="btn-fechar-loja" class="btn-fechar-x" aria-label="Fechar">✕</button>
+        </div>
+
+        <div class="loja-abas">
+            <button class="aba-loja ativa" data-aba-loja="vender">💰 Vender Recursos</button>
+            <button class="aba-loja" data-aba-loja="comprar">🛒 Comprar Produtos</button>
+        </div>
+
+        <div class="loja-painel" data-loja-painel="vender">
+
+        <div class="loja-grid">
+            <div class="loja-item" id="loja-item-madeira" data-recurso="madeira">
+                <div class="loja-item-icone"><span style="font-size: 26px;">🪵</span></div>
+                <div class="loja-item-info">
+                    <div class="loja-item-nome">Madeira</div>
+                    <div class="loja-item-preco">$300.00 / unidade</div>
+                    <div class="loja-item-disponivel">Disponível: <span id="loja-disp-madeira">0</span></div>
+                </div>
+                <div class="loja-item-acao">
+                    <input type="number" id="loja-input-madeira" class="loja-input-qtd" min="0" step="1" placeholder="0" inputmode="numeric">
+                    <button onclick="adicionarRecursoAVenda('madeira')">Adicionar</button>
+                </div>
+            </div>
+
+            <div class="loja-item" id="loja-item-pedra" data-recurso="pedra">
+                <div class="loja-item-icone"><span style="font-size: 26px;">🪨</span></div>
+                <div class="loja-item-info">
+                    <div class="loja-item-nome">Pedra</div>
+                    <div class="loja-item-preco">$350.00 / unidade</div>
+                    <div class="loja-item-disponivel">Disponível: <span id="loja-disp-pedra">0</span></div>
+                </div>
+                <div class="loja-item-acao">
+                    <input type="number" id="loja-input-pedra" class="loja-input-qtd" min="0" step="1" placeholder="0" inputmode="numeric">
+                    <button onclick="adicionarRecursoAVenda('pedra')">Adicionar</button>
+                </div>
+            </div>
+
+            <div class="loja-item" id="loja-item-ferro" data-recurso="ferro">
+                <div class="loja-item-icone"><img style="height: 65%; width: 90%;" src="img/ferro.png" alt=""></div>
+                <div class="loja-item-info">
+                    <div class="loja-item-nome">Ferro</div>
+                    <div class="loja-item-preco">$1,100.00 / unidade</div>
+                    <div class="loja-item-disponivel">Disponível: <span id="loja-disp-ferro">0</span></div>
+                </div>
+                <div class="loja-item-acao">
+                    <input type="number" id="loja-input-ferro" class="loja-input-qtd" min="0" step="1" placeholder="0" inputmode="numeric">
+                    <button onclick="adicionarRecursoAVenda('ferro')">Adicionar</button>
+                </div>
+            </div>
+
+            <div class="loja-item" id="loja-item-cobre" data-recurso="cobre">
+                <div class="loja-item-icone"><img style="height: 65%; width: 90%;" src="img/cobre.png" alt=""></div>
+                <div class="loja-item-info">
+                    <div class="loja-item-nome">Cobre</div>
+                    <div class="loja-item-preco">$800.00 / unidade</div>
+                    <div class="loja-item-disponivel">Disponível: <span id="loja-disp-cobre">0</span></div>
+                </div>
+                <div class="loja-item-acao">
+                    <input type="number" id="loja-input-cobre" class="loja-input-qtd" min="0" step="1" placeholder="0" inputmode="numeric">
+                    <button onclick="adicionarRecursoAVenda('cobre')">Adicionar</button>
+                </div>
+            </div>
+
+            <div class="loja-item" id="loja-item-ouro" data-recurso="ouro">
+                <div class="loja-item-icone"><img style="height: 65%; width: 90%;" src="img/ouro.png" alt=""></div>
+                <div class="loja-item-info">
+                    <div class="loja-item-nome">Ouro</div>
+                    <div class="loja-item-preco">$2,000.00 / unidade</div>
+                    <div class="loja-item-disponivel">Disponível: <span id="loja-disp-ouro">0</span></div>
+                </div>
+                <div class="loja-item-acao">
+                    <input type="number" id="loja-input-ouro" class="loja-input-qtd" min="0" step="1" placeholder="0" inputmode="numeric">
+                    <button onclick="adicionarRecursoAVenda('ouro')">Adicionar</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="loja-carrinho">
+            <h3>🛒 Itens para Vender</h3>
+            <div id="loja-carrinho-lista">
+                <div class="carrinho-vazio">Nenhum item adicionado ainda.</div>
+            </div>
+            <div class="loja-total">Total da Venda: <span id="loja-total-valor">$0.00</span></div>
+        </div>
+
+        <div class="loja-acoes">
+            <button id="btn-fechar-venda" class="btn-principal-loja" disabled>💰 Fechar Venda</button>
+        </div>
+
+        </div>
+
+        <div class="loja-painel" data-loja-painel="comprar" style="display:none;">
+            <div class="loja-grid">
+                <div class="loja-item loja-item-carro" id="loja-produto-carro" data-produto="carro">
+                    <div class="loja-item-linha-topo">
+                        <div class="loja-item-icone"><span style="font-size: 26px;">🚗</span></div>
+                        <div class="loja-item-info">
+                            <div class="loja-item-nome">Carro</div>
+                            <div class="loja-item-preco">$20,000.00</div>
+                            <div class="loja-item-disponivel">Você possui: <span id="loja-possui-carro">0</span></div>
+                        </div>
+                        <div class="loja-item-acao">
+                            <button id="loja-btn-comprar-carro" onclick="comprarProduto('carro')">Comprar</button>
+                        </div>
+                    </div>
+                    <div class="loja-cor-linha">
+                        <span class="loja-cor-rotulo">Cor:</span>
+                        <div class="paleta-cores-carro" id="paleta-cores-carro">
+                            <button class="cor-opcao ativa" data-cor="#dc2626" style="background:#dc2626" title="Vermelho"></button>
+                            <button class="cor-opcao" data-cor="#2563eb" style="background:#2563eb" title="Azul"></button>
+                            <button class="cor-opcao" data-cor="#111827" style="background:#111827" title="Preto"></button>
+                            <button class="cor-opcao" data-cor="#f3f4f6" style="background:#f3f4f6" title="Branco"></button>
+                            <button class="cor-opcao" data-cor="#9ca3af" style="background:#9ca3af" title="Prata"></button>
+                            <button class="cor-opcao" data-cor="#16a34a" style="background:#16a34a" title="Verde"></button>
+                            <button class="cor-opcao" data-cor="#eab308" style="background:#eab308" title="Amarelo"></button>
+                            <button class="cor-opcao" data-cor="#ea580c" style="background:#ea580c" title="Laranja"></button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="loja-item" id="loja-produto-tv" data-produto="tv">
+                    <div class="loja-item-icone"><span style="font-size: 26px;">📺</span></div>
+                    <div class="loja-item-info">
+                        <div class="loja-item-nome">Televisão</div>
+                        <div class="loja-item-preco">$2,000.00</div>
+                        <div class="loja-item-disponivel">Você possui: <span id="loja-possui-tv">0</span></div>
+                    </div>
+                    <div class="loja-item-acao">
+                        <button id="loja-btn-comprar-tv" onclick="comprarProduto('tv')">Comprar</button>
+                    </div>
+                </div>
+            </div>
+            <div class="loja-comprar-info">
+                🔑 Escolha a cor, depois compre. O carro vai pro inventário já com a cor escolhida — equipe e posicione-o
+                no mundo, como uma construção. Fique perto dele e pressione <b>E</b> para entrar e dirigir (W/A/S/D). Pressione <b>E</b> de novo para sair.<br><br>
+                📺 A televisão também é posicionada como uma construção. Fique perto dela e pressione <b>E</b> para ligar e escolher um minigame — tudo roda direto no navegador, sem precisar de nenhum arquivo extra.
+            </div>
+            <div class="loja-comprar-em-breve">Mais produtos em breve...</div>
+        </div>
+
+        <div class="loja-footer">Pressione <b>E</b> ou <b>ESC</b> para sair (itens não vendidos voltam pra mochila)</div>
+    </div>
+
+    <!-- Menu da TV: grade de minigames. Clicar num card abre o jogo escolhido. -->
+    <div id="menu-tv">
+        <div class="tv-header">
+            <h2>📺 Escolha um Minigame</h2>
+            <button id="btn-fechar-tv" class="btn-fechar-x" aria-label="Fechar">✕</button>
+        </div>
+        <div class="tv-grid" id="tv-grid"></div>
+        <div class="tv-footer">Pressione <b>E</b> ou <b>ESC</b> para desligar a TV</div>
+    </div>
+
+    <!-- Minigame ativo: aparece por cima do menu ao escolher um card. -->
+    <div id="menu-tv-jogo">
+        <div class="tv-video-header">
+            <span id="tv-jogo-titulo">Jogo</span>
+            <div class="tv-video-botoes">
+                <button id="btn-voltar-tv-jogo">⬅ Voltar aos jogos</button>
+                <button id="btn-fechar-tv-jogo" class="btn-fechar-x" aria-label="Fechar">✕</button>
+            </div>
+        </div>
+        <div id="tv-jogo-area"></div>
+    </div>
+
     <div id="aviso-orientacao">
         <p>Por favor, vire o celular na <b>Horizontal</b> para jogar!</p>
     </div>
@@ -242,7 +414,7 @@
         </div>
     </div>
 
-    <script src="script.js?v=8"></script>
+    <script src="script.js?v=11"></script>
 </body>
 </html>
 
