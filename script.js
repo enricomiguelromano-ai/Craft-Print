@@ -3,7 +3,12 @@ const ARQUIVOS_DE_AUDIO = {
     musicaFundo: 'sounds/craftprintMusic.mp3', passoNormal: 'sounds/walk.mp3',
     passoCorrer: 'sounds/run.mp3', passoAgua: 'sounds/walk_water.mp3',
     lanterna: 'sounds/click_lantern.mp3', portaAbrir: 'sounds/open_door.mp3',
-    portaFechar: 'sounds/close_door.mp3', pulo: 'sounds/jump.mp3'
+    portaFechar: 'sounds/close_door.mp3', pulo: 'sounds/jump.mp3',
+    // Coloque seus arquivos .mp3 com esses nomes exatos dentro da pasta "sounds/"
+    // (ou edite os caminhos abaixo se preferir outro nome/local):
+    machado: 'sounds/axe_chop.mp3',      // toca em loop enquanto corta madeira
+    picareta: 'sounds/pickaxe_mine.mp3', // toca em loop enquanto minera pedra
+    carroMotor: 'sounds/car_engine.mp3'  // toca em loop enquanto dirige o carro
 };
 const CAMINHO_QUADRO_IMAGEM = 'img/tumoritus.jpeg';
 
@@ -165,6 +170,16 @@ let tempoSegurandoClique = 0, estaMinando = false, arvoreSendoCortada = null, ro
 let modoConstrucaoAtivo = false, tipoCasaParaConstruir = null, hologramaVisual = null;
 let anguloRotacaoHolograma = 0;
 
+// --- AJUSTE DE DISTÂNCIA DE COLOCAÇÃO (roda do mouse / botões no celular) ---
+// Por padrão, a construção "gruda" na superfície mais próxima que o crosshair
+// está mirando (comportamento de sempre). Girar a roda do mouse soma/subtrai
+// dessa distância, dando mais liberdade pra colocar em terrenos abertos mais
+// longe, sem precisar que o crosshair esteja bem em cima do ponto exato.
+let distanciaExtraColocacao = 0;
+const DISTANCIA_BASE_COLOCACAO = 6;      // usada se o crosshair não estiver mirando em nada válido
+const DISTANCIA_MAX_EXTRA_COLOCACAO = 24; // quanto, no máximo, dá pra "empurrar" a construção com a roda
+const PASSO_DISTANCIA_COLOCACAO = 1.2;    // unidades por "clique" da roda do mouse / toque no botão
+
 // --- SISTEMA DE DEMOLIÇÃO DE CONSTRUÇÕES ---
 // Cada construção colocada no mundo vira um "registro" aqui, guardando tudo
 // que foi criado junto com ela (meshes, colisores, escadas, portas, etc.) para
@@ -228,6 +243,8 @@ const dinheiroHudEl = document.getElementById('dinheiro-hud');
 const barraProgressoContainer = document.getElementById('barra-coleta-container');
 const barraProgressoPreenchimento = document.getElementById('barra-coleta-progresso');
 const btnGirarPlantaMobile = document.getElementById('btn-girar-planta');
+const btnPlantaMaisPerto = document.getElementById('btn-planta-mais-perto');
+const btnPlantaMaisLonge = document.getElementById('btn-planta-mais-longe');
 
 const cena = new THREE.Scene();
 const corDia = new THREE.Color(0xa0c4ff), corNoite = new THREE.Color(0x050510), corOcaso = new THREE.Color(0xd97706);
@@ -319,6 +336,7 @@ if (btnFullscreen) {
 const ouvinteAudio = new THREE.AudioListener(); camera.add(ouvinteAudio);
 const carregadorAudio = new THREE.AudioLoader();
 const somMusicaFundo = new THREE.Audio(ouvinteAudio), somPassoNormal = new THREE.Audio(ouvinteAudio), somPassoCorrer = new THREE.Audio(ouvinteAudio), somPassoAgua = new THREE.Audio(ouvinteAudio), somLanterna = new THREE.Audio(ouvinteAudio), somPortaAbrir = new THREE.Audio(ouvinteAudio), somPortaFechar = new THREE.Audio(ouvinteAudio), somPulo = new THREE.Audio(ouvinteAudio);
+const somMachado = new THREE.Audio(ouvinteAudio), somPicareta = new THREE.Audio(ouvinteAudio), somCarroMotor = new THREE.Audio(ouvinteAudio);
 
 let audiosCarregados = false;
 function carregarTodosOsAudios() {
@@ -331,6 +349,9 @@ function carregarTodosOsAudios() {
     carregadorAudio.load(ARQUIVOS_DE_AUDIO.portaAbrir, b => { somPortaAbrir.setBuffer(b); somPortaAbrir.setVolume(0.6); });
     carregadorAudio.load(ARQUIVOS_DE_AUDIO.portaFechar, b => { somPortaFechar.setBuffer(b); somPortaFechar.setVolume(0.6); });
     carregadorAudio.load(ARQUIVOS_DE_AUDIO.pulo, b => { somPulo.setBuffer(b); somPulo.setVolume(0.5); });
+    carregadorAudio.load(ARQUIVOS_DE_AUDIO.machado, b => { somMachado.setBuffer(b); somMachado.setLoop(true); somMachado.setVolume(0.55); }, undefined, () => { });
+    carregadorAudio.load(ARQUIVOS_DE_AUDIO.picareta, b => { somPicareta.setBuffer(b); somPicareta.setLoop(true); somPicareta.setVolume(0.55); }, undefined, () => { });
+    carregadorAudio.load(ARQUIVOS_DE_AUDIO.carroMotor, b => { somCarroMotor.setBuffer(b); somCarroMotor.setLoop(true); somCarroMotor.setVolume(0.4); }, undefined, () => { });
     audiosCarregados = true;
 }
 
@@ -521,11 +542,16 @@ function atualizarUIAktiv() {
     if (itemAtivo.startsWith('planta_') && inventario[itemAtivo] > 0) {
         modoConstrucaoAtivo = true;
         tipoCasaParaConstruir = itemAtivo.replace('planta_', '');
+        distanciaExtraColocacao = 0;
         ativarHolograma(tipoCasaParaConstruir);
         if (typeof btnGirarPlantaMobile !== 'undefined' && btnGirarPlantaMobile) btnGirarPlantaMobile.style.display = 'block';
+        if (typeof btnPlantaMaisPerto !== 'undefined' && btnPlantaMaisPerto) btnPlantaMaisPerto.style.display = 'block';
+        if (typeof btnPlantaMaisLonge !== 'undefined' && btnPlantaMaisLonge) btnPlantaMaisLonge.style.display = 'block';
     } else {
         modoConstrucaoAtivo = false; desativarHolograma();
         if (typeof btnGirarPlantaMobile !== 'undefined' && btnGirarPlantaMobile) btnGirarPlantaMobile.style.display = 'none';
+        if (typeof btnPlantaMaisPerto !== 'undefined' && btnPlantaMaisPerto) btnPlantaMaisPerto.style.display = 'none';
+        if (typeof btnPlantaMaisLonge !== 'undefined' && btnPlantaMaisLonge) btnPlantaMaisLonge.style.display = 'none';
     }
 }
 
@@ -927,6 +953,8 @@ document.getElementById('btn-interagir')?.addEventListener('touchstart', (e) => 
     }
 });
 btnGirarPlantaMobile?.addEventListener('touchstart', (e) => { e.preventDefault(); if (modoConstrucaoAtivo) anguloRotacaoHolograma += Math.PI / 2; });
+btnPlantaMaisPerto?.addEventListener('touchstart', (e) => { e.preventDefault(); ajustarDistanciaColocacao(-PASSO_DISTANCIA_COLOCACAO); });
+btnPlantaMaisLonge?.addEventListener('touchstart', (e) => { e.preventDefault(); ajustarDistanciaColocacao(PASSO_DISTANCIA_COLOCACAO); });
 
 const bCorrida = document.getElementById('btn-corrida');
 if (bCorrida) {
@@ -1210,11 +1238,27 @@ function ativarHolograma(tipo) {
     }
 
     anguloRotacaoHolograma = 0;
+    distanciaExtraColocacao = 0;
     hologramaVisual.visible = false;
     cena.add(hologramaVisual);
 }
 
 function desativarHolograma() { if (hologramaVisual) { cena.remove(hologramaVisual); hologramaVisual = null; } }
+
+// Soma "delta" à distância extra de colocação (roda do mouse no PC, botões
+// ➖/➕ no celular), sempre travada entre 0 e DISTANCIA_MAX_EXTRA_COLOCACAO.
+function ajustarDistanciaColocacao(delta) {
+    if (!modoConstrucaoAtivo) return;
+    distanciaExtraColocacao = THREE.MathUtils.clamp(distanciaExtraColocacao + delta, 0, DISTANCIA_MAX_EXTRA_COLOCACAO);
+}
+
+// Roda do mouse (PC): girar "pra frente" (deltaY > 0) empurra a construção
+// pra mais longe; girar "pra trás" traz de volta pra mais perto.
+window.addEventListener('wheel', (e) => {
+    if (!modoConstrucaoAtivo) return;
+    e.preventDefault();
+    ajustarDistanciaColocacao(e.deltaY > 0 ? PASSO_DISTANCIA_COLOCACAO : -PASSO_DISTANCIA_COLOCACAO);
+}, { passive: false });
 
 function construirCasaDetalhada(tipo, posX, posY, posZ, rotacaoY) {
     const casa = new THREE.Group();
@@ -2340,6 +2384,7 @@ function entrarNoCarro(dadosCarro) {
 
     velocidade.set(0, 0, 0);
     pararSonsDeMovimento();
+    if (somCarroMotor.buffer && !somCarroMotor.isPlaying) somCarroMotor.play();
 
     mostrarNotificacao('🚗 Você entrou no carro! W/A/S/D para dirigir — pressione E para sair.', '#38bdf8');
 }
@@ -2364,6 +2409,7 @@ function sairDoCarro() {
     dirigindoCarro = false;
     carroAtual = null;
     podeSaltar = true;
+    if (somCarroMotor.isPlaying) somCarroMotor.stop();
 
     mostrarNotificacao('Você saiu do carro.', '#9ca3af');
 }
@@ -2451,6 +2497,14 @@ function atualizarDirecaoCarro(delta) {
     if (naAguaCarro) carroAtual.velocidade *= 0.97; // desacelera bastante na água
 
     grupo.rotation.y = carroAtual.direcaoY;
+
+    // Som do motor: acelera o "giro"/volume conforme a velocidade, pra dar
+    // uma sensação de aceleração real em vez de um loop sempre igual.
+    if (somCarroMotor.isPlaying) {
+        const fatorVelocidade = THREE.MathUtils.clamp(Math.abs(carroAtual.velocidade) / VELOCIDADE_MAX_CARRO, 0, 1);
+        somCarroMotor.setVolume(0.28 + fatorVelocidade * 0.32);
+        if (typeof somCarroMotor.setPlaybackRate === 'function') somCarroMotor.setPlaybackRate(0.85 + fatorVelocidade * 0.65);
+    }
 
     // Mantém o colisor do carro (em objetosMundo) grudado na posição visual dele
     carroAtual.colisor.x = grupo.position.x;
@@ -2838,6 +2892,17 @@ function animar() {
         }
     }
 
+    // Sons de machado/picareta: tocam em loop só enquanto o jogador está de
+    // fato golpeando a árvore/rocha certa com a ferramenta certa, e param
+    // assim que ele solta o clique, muda de alvo ou troca de ferramenta.
+    const cortandoArvoreAgora = !!(arvoreOlhada && estaMinando && itemAtivo === 'machado');
+    if (cortandoArvoreAgora) { if (!somMachado.isPlaying && somMachado.buffer) somMachado.play(); }
+    else if (somMachado.isPlaying) { somMachado.stop(); }
+
+    const minerandoRochaAgora = !!(rochaOlhada && estaMinando && itemAtivo === 'picareta');
+    if (minerandoRochaAgora) { if (!somPicareta.isPlaying && somPicareta.buffer) somPicareta.play(); }
+    else if (somPicareta.isPlaying) { somPicareta.stop(); }
+
     // Mineração de Árvores
     if (arvoreOlhada && estaMinando && itemAtivo === 'machado') {
         if (arvoreSendoCortada !== arvoreOlhada) { arvoreSendoCortada = arvoreOlhada; tempoSegurandoClique = 0; }
@@ -2961,16 +3026,53 @@ function animar() {
             (i.object === terreno || i.object === agua)
         );
 
-        if (chaoValido) {
+        // Se o jogador girou a roda do mouse (ou tocou ➕/➖ no celular) pra
+        // empurrar a construção mais longe/perto, isso tem prioridade sobre o
+        // ponto encontrado automaticamente — dá liberdade pra colocar em
+        // qualquer lugar do terreno aberto, não só exatamente onde o
+        // crosshair está mirando. Sem ajuste manual (distanciaExtraColocacao
+        // === 0), o comportamento continua idêntico ao de sempre.
+        let xAlvo, zAlvo, alturaAlvo, hologramaValido;
+
+        if (distanciaExtraColocacao > 0) {
+            const distanciaBase = chaoValido ? chaoValido.distance : DISTANCIA_BASE_COLOCACAO;
+            const distanciaFinal = distanciaBase + distanciaExtraColocacao;
+
+            const direcaoCam = new THREE.Vector3();
+            camera.getWorldDirection(direcaoCam);
+            const pontoAlvo = camera.position.clone().addScaledVector(direcaoCam, distanciaFinal);
+
+            xAlvo = pontoAlvo.x;
+            zAlvo = pontoAlvo.z;
+            alturaAlvo = obterAlturaTerreno(xAlvo, zAlvo);
+            hologramaValido = true;
+        } else if (chaoValido) {
+            xAlvo = chaoValido.point.x;
+            zAlvo = chaoValido.point.z;
+            alturaAlvo = chaoValido.point.y; // altura EXATA de onde o raio bateu (resolve afundar ou não subir pro 2º andar)
+            hologramaValido = true;
+        } else {
+            hologramaValido = false;
+        }
+
+        if (hologramaValido) {
             hologramaVisual.visible = true;
 
-            // Pega a altura EXATA de onde o raio bateu (resolve o problema de afundar ou não subir pro 2º andar)
-            let alturaAlvo = chaoValido.point.y;
-
-            // Mantém a grade de posicionamento para ficar organizado
-            let grid = (tipoCasaParaConstruir === 'piso' || tipoCasaParaConstruir === 'tocha' || tipoCasaParaConstruir === 'cama') ? 2 : 1;
-            let xAlvo = Math.round(chaoValido.point.x / grid) * grid;
-            let zAlvo = Math.round(chaoValido.point.z / grid) * grid;
+            // Grade de posicionamento: por padrão, quase tudo agora tem
+            // posicionamento LIVRE (segue o crosshair exatamente, sem pular de
+            // bloco em bloco) — igual à tocha, pra dar liberdade de encostar
+            // qualquer construção num canto, parede ou vão apertado. Só pisos e
+            // camas continuam alinhados numa grade de 2 (senão ficam com
+            // buracos/desencontrados entre um e outro). Segurando SHIFT, o
+            // comportamento INVERTE: pisos/camas ficam livres também (pra ajuste
+            // fino), e os itens livres passam a alinhar numa grade de 1 (útil
+            // pra alinhar cercas/muros rapidinho em linha reta).
+            const gridPadrao = (tipoCasaParaConstruir === 'piso' || tipoCasaParaConstruir === 'cama') ? 2 : null;
+            const grid = correndo ? (gridPadrao ? null : 1) : gridPadrao;
+            if (grid) {
+                xAlvo = Math.round(xAlvo / grid) * grid;
+                zAlvo = Math.round(zAlvo / grid) * grid;
+            }
 
             hologramaVisual.position.set(xAlvo, alturaAlvo, zAlvo);
             hologramaVisual.rotation.y = anguloRotacaoHolograma;

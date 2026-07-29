@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-select=none">
     <title>Craft Print</title>
-    <link rel="stylesheet" href="style.css?v=11">
+    <link rel="stylesheet" href="style.css?v=14">
 
     <script>
         // DIAGNÓSTICO TEMPORÁRIO: mostra qualquer erro de JavaScript na tela
@@ -77,6 +77,8 @@
                 <p><b>Tecla [E]:</b> Abrir Mesa de Crafting / Interagir</p>
                 <p><b>Tecla [B]:</b> Abrir Mochila</p>
                 <p><b>Teclas [R / T]:</b> Girar planta de construção</p>
+                <p><b>Roda do Mouse:</b> Ajustar a distância de colocação (empurrar mais longe/perto)</p>
+                <p><b>Posicionamento:</b> a maioria das construções agora é livre (segue o mouse exatamente) — só piso e cama ficam numa grade alinhada. Segure <b>[Shift]</b> pra inverter isso (grade nos itens livres, livre no piso/cama)</p>
                 <p><b>🚗 Carro:</b> Compre no Computador, posicione-o no mundo e pressione [E] perto dele para entrar. W/A/S/D dirige, [F] liga/desliga os faróis, [E] sai.</p>
                 <p><b>📺 Televisão:</b> Compre no Computador, posicione-a no mundo e pressione [E] perto dela pra ligar e escolher um minigame (cobrinha, jogo da velha, memória, pong e reflexo).</p>
                 <p><b>ESC:</b> Pausar o jogo / Menu</p>
@@ -411,10 +413,12 @@
             <button id="btn-corrida" class="btn-touch">⚡ Correr</button>
             <button id="btn-mochila-mobile" class="btn-touch">🎒 Mochila</button>
             <button id="btn-girar-planta" class="btn-touch" style="display: none;">🔄 Girar</button>
+            <button id="btn-planta-mais-perto" class="btn-touch" style="display: none;">➖ Perto</button>
+            <button id="btn-planta-mais-longe" class="btn-touch" style="display: none;">➕ Longe</button>
         </div>
     </div>
 
-    <script src="script.js?v=11"></script>
+    <script src="script.js?v=14"></script>
 </body>
 </html>
 
