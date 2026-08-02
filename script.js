@@ -411,8 +411,6 @@ const modalControles = document.getElementById('modal-controles');
 const btnIniciarJogo = document.getElementById('btn-iniciar-jogo');
 const btnRetomar = document.getElementById('btn-retomar');
 const btnReiniciar = document.getElementById('btn-reiniciar');
-const btnSalvarJogo = document.getElementById('btn-salvar-jogo');
-const btnContinuarSalvo = document.getElementById('btn-continuar-salvo');
 // CORREÇÃO: 'controlesMobileDiv' já tinha sido declarado lá em cima (linha ~44).
 // Essa segunda declaração 'const' duplicada travava o carregamento do script inteiro.
 
@@ -476,23 +474,6 @@ if (btnRetomar) {
 
 if (btnReiniciar) { btnReiniciar.addEventListener('click', () => { window.location.reload(); }); }
 
-if (btnSalvarJogo) { btnSalvarJogo.addEventListener('click', () => { salvarJogo(); }); }
-
-// Mostra o botão "Continuar Jogo Salvo" na tela inicial só se já existir um
-// save no navegador (senão fica escondido, como já vem por padrão no HTML).
-if (btnContinuarSalvo) {
-    if (typeof existeJogoSalvo === 'function' && existeJogoSalvo()) {
-        btnContinuarSalvo.style.display = 'block';
-    }
-    const iniciarComSave = (e) => {
-        e.preventDefault();
-        iniciarJogo();
-        carregarJogo();
-    };
-    btnContinuarSalvo.addEventListener('mousedown', iniciarComSave);
-    btnContinuarSalvo.addEventListener('touchstart', iniciarComSave, { passive: false });
-}
-
 // --- CONTROLE DE POINTER LOCK E ESC (PC) ---
 if (typeof controles !== 'undefined' && controles) {
     controles.addEventListener('lock', () => {
@@ -513,10 +494,6 @@ if (typeof controles !== 'undefined' && controles) {
             if (menuPause) menuPause.style.display = 'flex';
             jogoPausado = true;
             if (typeof pararSonsDeMovimento === 'function') pararSonsDeMovimento();
-
-            // Pausar é um ótimo momento pra auto-salvar: o jogador já parou
-            // pra ver o menu, então mostra o aviso normalmente.
-            if (typeof salvarJogo === 'function') salvarJogo(true);
         }
     });
 }
@@ -3619,10 +3596,6 @@ function executarConstrucaoReal() {
     }
 
     atualizarUIAktiv();
-
-    // Auto-save silencioso: qualquer construção nova já fica salva sozinha,
-    // sem precisar que o jogador lembre de abrir o menu e clicar em salvar.
-    if (typeof salvarJogo === 'function') salvarJogo(false);
 }
 
 // Constrói de fato os meshes/colisores de uma construção no mundo, numa
@@ -3751,9 +3724,7 @@ function criarConstrucaoNoMundo(tipoCasaParaConstruir, x, y, z, anguloRotacaoHol
         escadasObjs: listaEscadas.slice(snapshot.escadas),
         fogueirasObjs: listaFogueirasDinamicas.slice(snapshot.fogueiras),
         portasObjs: todasAsPortas.slice(snapshot.portas),
-        // Guarda também a posição/ângulo originais — é o que permite salvar o
-        // jogo (ver salvarJogo/carregarJogo) e recriar tudo depois sem
-        // precisar "adivinhar" onde cada coisa estava.
+        // Guarda também a posição/ângulo originais.
         x: posAlvo.x, y: posAlvo.y, z: posAlvo.z, rotY: anguloRotacaoHolograma
     };
     registro.raycastObjs.forEach(obj => { if (obj && obj.userData) obj.userData.construcaoInfo = registro; });
@@ -3762,9 +3733,8 @@ function criarConstrucaoNoMundo(tipoCasaParaConstruir, x, y, z, anguloRotacaoHol
 }
 
 // Remove uma construção do mundo (meshes, colisores, listas auxiliares) sem
-// devolver material ao inventário nem mostrar notificação — a parte "física"
-// que tanto demolirConstrucao (jogador demolindo de verdade) quanto
-// carregarJogo (limpando o mundo antes de recriar um save) precisam.
+// devolver material ao inventário nem mostrar notificação — usado por
+// demolirConstrucao quando o jogador demole de verdade.
 function removerConstrucaoDoMundo(registro) {
     registro.raycastObjs.forEach(obj => {
         if (!obj) return;
@@ -3845,158 +3815,7 @@ function demolirConstrucao(registro) {
     } else {
         mostrarNotificacao('Construção demolida! Item devolvido ao inventário.', '#22c55e');
     }
-
-    // Auto-save silencioso, mesma lógica de quando se constrói algo.
-    if (typeof salvarJogo === 'function') salvarJogo(false);
 }
-
-// ============================================================
-// 💾 SALVAR / CARREGAR JOGO (localStorage)
-// ============================================================
-// Guarda tudo num único JSON dentro do localStorage do navegador: posição e
-// direção do olhar do jogador, dinheiro, inventário, hotbar, item ativo, se
-// a lanterna estava ligada, e a lista de construções colocadas (cada uma só
-// com tipo/posição/ângulo — os meshes de verdade são recriados do zero ao
-// carregar, via criarConstrucaoNoMundo). Não tenta salvar árvores/pedras já
-// cortadas, animais ou carros dirigíveis — o save cobre o progresso que
-// importa (o que você construiu e o que tem no inventário).
-const CHAVE_JOGO_SALVO = 'craftprint_save_v1';
-
-// Verdadeiro se existe algum jogo salvo no navegador (usado pra decidir se
-// mostra o botão "Continuar Jogo Salvo" na tela inicial).
-function existeJogoSalvo() {
-    try { return !!localStorage.getItem(CHAVE_JOGO_SALVO); } catch (erro) { return false; }
-}
-
-// Monta o objeto simples (só dados, sem referências a meshes) que vai pro
-// localStorage.
-function coletarEstadoParaSalvar() {
-    const posJ = obterAncoraCamera();
-    return {
-        versao: 1,
-        salvoEm: Date.now(),
-        jogador: {
-            x: posJ.x, y: posJ.y, z: posJ.z,
-            rotY: camera.rotation.y,
-            rotX: camera.rotation.x
-        },
-        dinheiro: dinheiroJogador,
-        inventario: { ...inventario },
-        hotbar: hotbar.slice(),
-        itemAtivo: itemAtivo,
-        lanternaLigada: lanternaLigada,
-        // Só os tipos que guardam posição própria (todas, desde o refactor de
-        // criarConstrucaoNoMundo) — filtro aqui é só uma proteção extra.
-        construcoes: construcoesColocadas
-            .filter(r => typeof r.x === 'number')
-            .map(r => ({ tipo: r.tipo, x: r.x, y: r.y, z: r.z, rotY: r.rotY || 0 }))
-    };
-}
-
-// Chamada pelo botão "💾 Salvar Jogo" do menu de pausa, e também pelo
-// sistema de auto-save (silencioso = true) em vários momentos do jogo — ver
-// mais abaixo os pontos onde salvarJogo(true/false) é chamada automaticamente.
-function salvarJogo(mostrarNotif = true) {
-    try {
-        const estado = coletarEstadoParaSalvar();
-        localStorage.setItem(CHAVE_JOGO_SALVO, JSON.stringify(estado));
-        if (mostrarNotif) mostrarNotificacao('💾 Jogo salvo com sucesso!', '#22c55e');
-    } catch (erro) {
-        console.error('Erro ao salvar o jogo:', erro);
-        if (mostrarNotif) mostrarNotificacao('Não foi possível salvar o jogo (armazenamento cheio ou bloqueado).', '#ef4444');
-    }
-}
-
-// Lê o localStorage e reconstrói o estado salvo no mundo já carregado.
-// mostrarAviso=false é usado no arranque automático (silencioso) se um dia
-// quisermos carregar sem notificação; por padrão sempre avisa o jogador.
-function carregarJogo(mostrarAviso = true) {
-    let estado;
-    try {
-        const bruto = localStorage.getItem(CHAVE_JOGO_SALVO);
-        if (!bruto) {
-            if (mostrarAviso) mostrarNotificacao('Nenhum jogo salvo encontrado.', '#f59e0b');
-            return false;
-        }
-        estado = JSON.parse(bruto);
-    } catch (erro) {
-        console.error('Erro ao ler o jogo salvo:', erro);
-        if (mostrarAviso) mostrarNotificacao('O jogo salvo está corrompido.', '#ef4444');
-        return false;
-    }
-
-    // Tira do mundo tudo que o jogador já tinha construído nesta sessão
-    // (sem devolver material — o inventário salvo vai substituir o atual
-    // daqui a pouco de qualquer forma) antes de recriar exatamente o que
-    // estava salvo.
-    construcoesColocadas.slice().forEach(registro => removerConstrucaoDoMundo(registro));
-
-    // Recria cada construção salva na posição/ângulo originais
-    (estado.construcoes || []).forEach(c => {
-        try { criarConstrucaoNoMundo(c.tipo, c.x, c.y, c.z, c.rotY || 0); }
-        catch (erro) { console.warn('Falha ao recriar construção salva:', c, erro); }
-    });
-
-    // Restaura inventário (mantém qualquer chave nova que não exista no save
-    // antigo), dinheiro, hotbar e item ativo
-    if (estado.inventario) inventario = { ...inventario, ...estado.inventario };
-    if (typeof estado.dinheiro === 'number') dinheiroJogador = estado.dinheiro;
-    if (Array.isArray(estado.hotbar)) {
-        hotbar = estado.hotbar.slice(0, LIMITE_HOTBAR);
-        while (hotbar.length < LIMITE_HOTBAR) hotbar.push(null);
-    }
-    if (estado.itemAtivo) itemAtivo = estado.itemAtivo;
-
-    // Restaura posição e direção do olhar do jogador
-    if (estado.jogador) {
-        obterAncoraCamera().set(estado.jogador.x, estado.jogador.y, estado.jogador.z);
-        camera.rotation.y = estado.jogador.rotY || 0;
-        camera.rotation.x = estado.jogador.rotX || 0;
-        cameraYawAlvo = camera.rotation.y;
-        cameraPitchAlvo = camera.rotation.x;
-    }
-
-    // Lanterna
-    if (typeof estado.lanternaLigada === 'boolean' && estado.lanternaLigada !== lanternaLigada) {
-        lanternaLigada = estado.lanternaLigada;
-        if (typeof luzLanterna !== 'undefined') luzLanterna.visible = lanternaLigada;
-    }
-
-    atualizarUIAktiv();
-    if (typeof atualizarDinheiroUI === 'function') atualizarDinheiroUI();
-    if (typeof sincronizarQuantidadesMochila === 'function') sincronizarQuantidadesMochila();
-
-    if (mostrarAviso) mostrarNotificacao('📂 Jogo carregado!', '#22c55e');
-    return true;
-}
-
-// Auto-save periódico: a cada 60s, se o jogo já começou, salva sozinho e
-// silenciosamente (sem popup) — assim o jogador nunca perde muito progresso
-// mesmo que esqueça de pausar ou feche o jogo sem querer.
-const INTERVALO_AUTO_SAVE_MS = 60000;
-setInterval(() => {
-    if (typeof jogoIniciado !== 'undefined' && jogoIniciado && typeof salvarJogo === 'function') {
-        salvarJogo(false);
-    }
-}, INTERVALO_AUTO_SAVE_MS);
-
-// Salva também sempre que a aba/app perde o foco (troca de aba, minimiza,
-// bloqueia o celular) — mais confiável que "beforeunload" em navegadores
-// mobile, onde fechar o app às vezes não dispara esse evento.
-document.addEventListener('visibilitychange', () => {
-    if (document.hidden && typeof jogoIniciado !== 'undefined' && jogoIniciado && typeof salvarJogo === 'function') {
-        salvarJogo(false);
-    }
-});
-
-// Última tentativa de salvar ao fechar/recarregar a página (best-effort —
-// nem todo navegador garante que código assíncrono rode aqui, mas
-// localStorage.setItem é síncrono, então costuma funcionar).
-window.addEventListener('beforeunload', () => {
-    if (typeof jogoIniciado !== 'undefined' && jogoIniciado && typeof salvarJogo === 'function') {
-        salvarJogo(false);
-    }
-});
 
 const relogio = new THREE.Clock(); let tempoCiclo = 0.5;
 
