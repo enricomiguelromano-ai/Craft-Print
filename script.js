@@ -6,9 +6,10 @@ const ARQUIVOS_DE_AUDIO = {
     portaFechar: 'sounds/close_door.mp3', pulo: 'sounds/jump.mp3',
     // Coloque seus arquivos .mp3 com esses nomes exatos dentro da pasta "sounds/"
     // (ou edite os caminhos abaixo se preferir outro nome/local):
-    machado: 'sounds/axe_chop.mp3',      // toca em loop enquanto corta madeira
-    picareta: 'sounds/pickaxe_mine.mp3', // toca em loop enquanto minera pedra
-    carroMotor: 'sounds/car_engine.mp3'  // toca em loop enquanto dirige o carro
+    machado: 'sounds/machado.mp3',      // toca em loop enquanto corta madeira
+    picareta: 'sounds/picareta.mp3', // toca em loop enquanto minera pedra
+    carroMotor: 'sounds/car_engine.mp3',  // toca em loop enquanto dirige o carro
+    andarAnimal: 'sounds/walk_animal.mp3' // toca (perto do jogador) enquanto um animal está andando
 };
 const CAMINHO_QUADRO_IMAGEM = 'img/tumoritus.jpeg';
 
@@ -205,6 +206,14 @@ const MATERIAL_POR_CONSTRUCAO = {
 let listaEscadas = [];
 let listaFogueirasDinamicas = [];
 
+// --- FAUNA (ursos, lobos, coelhos, cervos vagando pelo mapa) ---
+// Cada bicho vira um "dadosAnimal" aqui: { tipo, grupo (THREE.Group visual,
+// com pernas/cabeça/orelhas em subgrupos pra dar pra animar), colisor (entrada
+// em objetosMundo, atualizada a cada frame — bloqueia o jogador de atravessar
+// o bicho, do mesmo jeito que árvore/pedra), estado ('parado'|'andando') e um
+// "alvo" pra onde ele tá andando no momento. Ver atualizarAnimais().
+let animaisNoMundo = [];
+
 // --- SISTEMA DE CARROS DIRIGÍVEIS ---
 // Cada carro colocado no mundo vira um "dadosCarro" aqui: { grupo (THREE.Group
 // visual), colisor (entrada em objetosMundo que é atualizada em tempo real
@@ -338,6 +347,18 @@ const carregadorAudio = new THREE.AudioLoader();
 const somMusicaFundo = new THREE.Audio(ouvinteAudio), somPassoNormal = new THREE.Audio(ouvinteAudio), somPassoCorrer = new THREE.Audio(ouvinteAudio), somPassoAgua = new THREE.Audio(ouvinteAudio), somLanterna = new THREE.Audio(ouvinteAudio), somPortaAbrir = new THREE.Audio(ouvinteAudio), somPortaFechar = new THREE.Audio(ouvinteAudio), somPulo = new THREE.Audio(ouvinteAudio);
 const somMachado = new THREE.Audio(ouvinteAudio), somPicareta = new THREE.Audio(ouvinteAudio), somCarroMotor = new THREE.Audio(ouvinteAudio);
 
+// Som de passos dos animais: diferente dos outros sons (que são "globais",
+// tocando direto no ouvido da câmera), este é POSICIONAL — cada animal tem
+// sua própria instância de THREE.PositionalAudio presa ao próprio grupo 3D
+// dele, então o volume sobe/desce sozinho conforme a distância até o
+// jogador (ver setRefDistance/setRolloffFactor abaixo). Como os animais já
+// nascem no mundo antes do jogador clicar em "Jogar" (e o áudio só pode
+// carregar depois desse clique, por causa da política dos navegadores), o
+// buffer carregado é guardado aqui e aplicado tanto nos animais que já
+// existem (fila) quanto, dali em diante, em qualquer animal novo.
+let bufferPassoAnimal = null;
+const filaPositionalAnimais = [];
+
 let audiosCarregados = false;
 function carregarTodosOsAudios() {
     if (audiosCarregados) return;
@@ -352,6 +373,14 @@ function carregarTodosOsAudios() {
     carregadorAudio.load(ARQUIVOS_DE_AUDIO.machado, b => { somMachado.setBuffer(b); somMachado.setLoop(true); somMachado.setVolume(0.55); }, undefined, () => { });
     carregadorAudio.load(ARQUIVOS_DE_AUDIO.picareta, b => { somPicareta.setBuffer(b); somPicareta.setLoop(true); somPicareta.setVolume(0.55); }, undefined, () => { });
     carregadorAudio.load(ARQUIVOS_DE_AUDIO.carroMotor, b => { somCarroMotor.setBuffer(b); somCarroMotor.setLoop(true); somCarroMotor.setVolume(0.4); }, undefined, () => { });
+    carregadorAudio.load(ARQUIVOS_DE_AUDIO.andarAnimal, b => {
+        bufferPassoAnimal = b;
+        // Os animais que já nasceram (antes do áudio carregar) receberam um
+        // THREE.PositionalAudio "vazio" e ficaram esperando nesta fila —
+        // agora que o buffer chegou, aplica nele todo mundo de uma vez.
+        filaPositionalAnimais.forEach(som => som.setBuffer(b));
+        filaPositionalAnimais.length = 0;
+    }, undefined, () => { });
     audiosCarregados = true;
 }
 
@@ -382,6 +411,8 @@ const modalControles = document.getElementById('modal-controles');
 const btnIniciarJogo = document.getElementById('btn-iniciar-jogo');
 const btnRetomar = document.getElementById('btn-retomar');
 const btnReiniciar = document.getElementById('btn-reiniciar');
+const btnSalvarJogo = document.getElementById('btn-salvar-jogo');
+const btnContinuarSalvo = document.getElementById('btn-continuar-salvo');
 // CORREÇÃO: 'controlesMobileDiv' já tinha sido declarado lá em cima (linha ~44).
 // Essa segunda declaração 'const' duplicada travava o carregamento do script inteiro.
 
@@ -445,6 +476,23 @@ if (btnRetomar) {
 
 if (btnReiniciar) { btnReiniciar.addEventListener('click', () => { window.location.reload(); }); }
 
+if (btnSalvarJogo) { btnSalvarJogo.addEventListener('click', () => { salvarJogo(); }); }
+
+// Mostra o botão "Continuar Jogo Salvo" na tela inicial só se já existir um
+// save no navegador (senão fica escondido, como já vem por padrão no HTML).
+if (btnContinuarSalvo) {
+    if (typeof existeJogoSalvo === 'function' && existeJogoSalvo()) {
+        btnContinuarSalvo.style.display = 'block';
+    }
+    const iniciarComSave = (e) => {
+        e.preventDefault();
+        iniciarJogo();
+        carregarJogo();
+    };
+    btnContinuarSalvo.addEventListener('mousedown', iniciarComSave);
+    btnContinuarSalvo.addEventListener('touchstart', iniciarComSave, { passive: false });
+}
+
 // --- CONTROLE DE POINTER LOCK E ESC (PC) ---
 if (typeof controles !== 'undefined' && controles) {
     controles.addEventListener('lock', () => {
@@ -465,6 +513,10 @@ if (typeof controles !== 'undefined' && controles) {
             if (menuPause) menuPause.style.display = 'flex';
             jogoPausado = true;
             if (typeof pararSonsDeMovimento === 'function') pararSonsDeMovimento();
+
+            // Pausar é um ótimo momento pra auto-salvar: o jogador já parou
+            // pra ver o menu, então mostra o aviso normalmente.
+            if (typeof salvarJogo === 'function') salvarJogo(true);
         }
     });
 }
@@ -964,7 +1016,7 @@ if (bCorrida) {
 function pararSonsDeMovimento() { if (somPassoNormal.isPlaying) somPassoNormal.stop(); if (somPassoCorrer.isPlaying) somPassoCorrer.stop(); if (somPassoAgua.isPlaying) somPassoAgua.stop(); audioAtualTocando = null; }
 
 const luzLanterna = new THREE.SpotLight(0xfffdd0, 4.0, 50, Math.PI / 5, 0.6, 1);
-luzLanterna.castShadow = true; luzLanterna.shadow.mapSize.width = 1024; luzLanterna.shadow.mapSize.height = 1024; luzLanterna.visible = false; camera.add(luzLanterna); luzLanterna.position.set(0.3, -0.4, -0.2); luzLanterna.target = new THREE.Object3D(); camera.add(luzLanterna.target); luzLanterna.target.position.set(0, 0, -1);
+luzLanterna.castShadow = true; luzLanterna.shadow.mapSize.width = 1024; luzLanterna.shadow.mapSize.height = 1024; luzLanterna.visible = false; camera.add(luzLanterna); luzLanterna.position.set(0, 0, 0); luzLanterna.target = new THREE.Object3D(); camera.add(luzLanterna.target); luzLanterna.target.position.set(0, 0, -1);
 
 function gerarTexturaGrama() { const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 512; const ctx = canvas.getContext('2d'); ctx.fillStyle = '#1e3f20'; ctx.fillRect(0, 0, 512, 512); for (let i = 0; i < 20000; i++) { ctx.fillStyle = Math.random() > 0.5 ? '#152e16' : '#254a27'; ctx.fillRect(Math.random() * 512, Math.random() * 512, 3, 3); } const textura = new THREE.CanvasTexture(canvas); textura.wrapS = THREE.RepeatWrapping; textura.wrapT = THREE.RepeatWrapping; textura.repeat.set(60, 60); return textura; }
 function gerarTexturaTronco() { const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 512; const ctx = canvas.getContext('2d'); ctx.fillStyle = '#5c321a'; ctx.fillRect(0, 0, 512, 512); for (let i = 0; i < 900; i++) { ctx.fillStyle = Math.random() > 0.4 ? '#3b1f10' : '#472613'; ctx.fillRect(Math.random() * 512, 0, Math.random() * 5 + 2, 512); } return new THREE.CanvasTexture(canvas); }
@@ -1157,6 +1209,935 @@ function criarRocha(x, z) {
     objetosMundo.push(objDados); objetosRaycast.push(r);
 }
 for (let i = 0; i < 140; i++) { let x = (Math.random() - 0.5) * 340, z = (Math.random() - 0.5) * 340; if (Math.abs(x) > 12 || Math.abs(z) > 12) { if (Math.random() > 0.35) criarArvoreDiferenciada(x, z); else criarRocha(x, z); } }
+
+// ============================================================
+// FAUNA: modelos 3D + IA de vagueio + animação (ursos, lobos, coelhos, cervos)
+// ============================================================
+
+// Cria um "membro" articulado (perna, orelha, etc): um grupo pivô na altura
+// de encaixe (ombro/quadril/base da orelha) contendo a peça em si, deslocada
+// pra baixo pela metade do comprimento — assim, girar pivot.rotation.x faz a
+// peça balançar em torno do ponto de encaixe, como uma perna de verdade.
+// Mesmo truque já usado nas rodas do carro (ver criarModeloCarro).
+function criarMembroAnimal(comprimento, raioTopo, raioBase, material, matPata) {
+    const pivot = new THREE.Group();
+    const membro = new THREE.Mesh(new THREE.CylinderGeometry(raioTopo, raioBase, comprimento, 7), material);
+    membro.position.y = -comprimento / 2;
+    membro.castShadow = true;
+    pivot.add(membro);
+    // Pata em bloco na ponta da perna — quebra a silhueta "só cilindro/esfera"
+    // e dá um contato mais firme (e mais "de jogo") com o chão.
+    if (matPata) {
+        const pata = new THREE.Mesh(new THREE.BoxGeometry(raioBase * 2.2, raioBase * 1.1, raioBase * 2.7), matPata);
+        pata.position.y = -comprimento - raioBase * 0.25;
+        pata.castShadow = true;
+        pivot.add(pata);
+    }
+    return pivot;
+}
+
+// Par de olhos (com um pontinho de brilho) pra colar num grupo "cabeca".
+// px/py/pz são as coordenadas locais do olho direito; o esquerdo é o espelho em X.
+// Retorna { grupo, olhos } — "olhos" são os 2 meshes das esferas, guardados
+// à parte pra dar pra animar o piscar (escala em Y) sem mexer no brilho.
+function criarParOlhos(px, py, pz, raio, matIris) {
+    const grupo = new THREE.Group();
+    const olhos = [];
+    const matBrilho = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
+    [-px, px].forEach(x => {
+        const olho = new THREE.Mesh(new THREE.SphereGeometry(raio, 6, 6), matIris);
+        olho.position.set(x, py, pz);
+        grupo.add(olho);
+        olhos.push(olho);
+        const brilho = new THREE.Mesh(new THREE.SphereGeometry(raio * 0.35, 4, 4), matBrilho);
+        brilho.position.set(x - raio * 0.35, py + raio * 0.35, pz - raio * 0.6);
+        grupo.add(brilho);
+    });
+    return { grupo, olhos };
+}
+
+// Disco achatado e semitransparente colado nos pés do bicho — sombra de
+// contato "falsa" (AO barato). Sem isso o modelo parece flutuar um pouco
+// sobre o terreno mesmo com a sombra direcional ligada.
+function criarSombraContato(raio) {
+    const geo = new THREE.CircleGeometry(raio, 12);
+    const mat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32, depthWrite: false });
+    const disco = new THREE.Mesh(geo, mat);
+    disco.rotation.x = -Math.PI / 2;
+    disco.position.y = 0.03;
+    disco.renderOrder = 1;
+    return disco;
+}
+
+// --- 🐻 Urso Pardo ---
+function criarModeloUrso() {
+    const grupo = new THREE.Group();
+    const tomBase = 0.06 + Math.random() * 0.02;
+    const corPelo = new THREE.Color().setHSL(tomBase, 0.45, 0.24 + Math.random() * 0.07);
+    const matPelo = new THREE.MeshStandardMaterial({ color: corPelo, roughness: 0.92, flatShading: true });
+    const matPeloEscuro = new THREE.MeshStandardMaterial({ color: corPelo.clone().multiplyScalar(0.55), roughness: 0.92, flatShading: true });
+    const matNariz = new THREE.MeshStandardMaterial({ color: 0x1a1410, roughness: 0.6 });
+
+    const matOlho = new THREE.MeshStandardMaterial({ color: 0x201108, roughness: 0.35 });
+
+    // Torso volumoso e alongado, com a "corcova" característica do urso pardo nos ombros
+    const torso = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), matPelo);
+    torso.scale.set(0.95, 0.85, 1.45);
+    torso.position.y = 1.05;
+    torso.castShadow = true;
+    grupo.add(torso);
+    const corcova = new THREE.Mesh(new THREE.SphereGeometry(0.55, 8, 6), matPelo);
+    corcova.position.set(0, 1.55, 0.45);
+    corcova.castShadow = true;
+    grupo.add(corcova);
+    // Peito em bloco: quebra a silhueta "só esferas" e dá presença mais robusta
+    const peito = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.7, 0.5), matPelo);
+    peito.position.set(0, 0.85, -1.0);
+    peito.castShadow = true;
+    grupo.add(peito);
+    // Mancha de pelo claro no peito — quebra a cor sólida do corpo
+    const matPeloClaro = new THREE.MeshStandardMaterial({ color: corPelo.clone().lerp(new THREE.Color(0xd8c7a8), 0.5), roughness: 0.92, flatShading: true });
+    const manchaPeito = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.22), matPeloClaro);
+    manchaPeito.position.set(0, 0.72, -1.2);
+    grupo.add(manchaPeito);
+
+    // Cabeça (grupo próprio: gira sozinha pra "olhar ao redor" na animação idle)
+    const cabeca = new THREE.Group();
+    cabeca.position.set(0, 1.15, -1.35);
+    const craneo = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8), matPelo);
+    craneo.scale.set(0.9, 0.85, 0.95);
+    craneo.castShadow = true;
+    cabeca.add(craneo);
+    // Focinho em bloco (mais quadrado/moderno em vez de só um cilindro liso)
+    const focinho = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.36, 0.55), matPelo);
+    focinho.position.set(0, -0.12, -0.6);
+    focinho.castShadow = true;
+    cabeca.add(focinho);
+    const narizTopo = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.12, 0.18), matPeloEscuro);
+    narizTopo.position.set(0, 0.1, -0.84);
+    cabeca.add(narizTopo);
+    const nariz = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 6), matNariz);
+    nariz.position.set(0, -0.02, -0.9);
+    cabeca.add(nariz);
+    [-0.28, 0.28].forEach(px => {
+        const orelha = new THREE.Mesh(new THREE.SphereGeometry(0.14, 6, 6), matPeloEscuro);
+        orelha.position.set(px, 0.42, 0.05);
+        orelha.castShadow = true;
+        cabeca.add(orelha);
+    });
+    const parOlhosUrso = criarParOlhos(0.17, 0.06, -0.4, 0.06, matOlho);
+    cabeca.add(parOlhosUrso.grupo);
+    grupo.add(cabeca);
+
+    // Rabo (bem curto, típico de urso)
+    const rabo = new THREE.Mesh(new THREE.SphereGeometry(0.13, 6, 6), matPelo);
+    rabo.position.set(0, 0.95, 1.45);
+    grupo.add(rabo);
+
+    grupo.add(criarSombraContato(0.95));
+
+    // Pernas: 4, grossas e curtas, com patas em bloco
+    const pernas = {};
+    const posPernas = { dianteiraEsq: [-0.55, 1.0, -0.75], dianteiraDir: [0.55, 1.0, -0.75], traseiraEsq: [-0.6, 1.0, 0.85], traseiraDir: [0.6, 1.0, 0.85] };
+    Object.keys(posPernas).forEach(nome => {
+        const [px, py, pz] = posPernas[nome];
+        const pivot = criarMembroAnimal(1.0, 0.26, 0.3, matPeloEscuro, matPeloEscuro);
+        pivot.position.set(px, py, pz);
+        grupo.add(pivot);
+        pernas[nome] = pivot;
+    });
+
+    grupo.userData.cabeca = cabeca;
+    grupo.userData.pernas = pernas;
+    grupo.userData.torso = torso;
+    grupo.userData.olhos = parOlhosUrso.olhos;
+    return grupo;
+}
+
+// --- 🐺 Lobo ---
+function criarModeloLobo() {
+    const grupo = new THREE.Group();
+    const tomBase = 0.09 + Math.random() * 0.05;
+    const corPelo = new THREE.Color().setHSL(tomBase, 0.12, 0.32 + Math.random() * 0.1);
+    const matPelo = new THREE.MeshStandardMaterial({ color: corPelo, roughness: 0.9, flatShading: true });
+    const matPeloClaro = new THREE.MeshStandardMaterial({ color: corPelo.clone().multiplyScalar(1.35), roughness: 0.9, flatShading: true });
+    const matPeloEscuro = new THREE.MeshStandardMaterial({ color: corPelo.clone().multiplyScalar(0.55), roughness: 0.9, flatShading: true });
+    const matNariz = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5 });
+    const matOlho = new THREE.MeshStandardMaterial({ color: 0xd9a441, roughness: 0.35, emissive: 0x3a2400, emissiveIntensity: 0.35 });
+
+    // Torso: caixa reta e fina (não esfera) — silhueta magra e comprida de lobo,
+    // bem diferente do corpo "gordo" anterior.
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.54, 1.5), matPelo);
+    torso.position.set(0, 0.72, 0);
+    torso.castShadow = true;
+    grupo.add(torso);
+    // Peito claro, um pouco mais largo que o torso, marca a caixa torácica
+    const peito = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.5, 0.46), matPeloClaro);
+    peito.position.set(0, 0.68, -0.82);
+    peito.castShadow = true;
+    grupo.add(peito);
+    // Quadril levemente mais estreito, reforça a linha reta e enxuta do corpo
+    const quadril = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.48, 0.4), matPelo);
+    quadril.position.set(0, 0.66, 0.75);
+    quadril.castShadow = true;
+    grupo.add(quadril);
+    // Faixa de barriga clara — some visualmente com o peito já claro e
+    // desenha uma "linha" mais clara embaixo do corpo todo
+    const barriga = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.16, 1.3), matPeloClaro);
+    barriga.position.set(0, 0.48, 0.05);
+    grupo.add(barriga);
+
+    const cabeca = new THREE.Group();
+    cabeca.position.set(0, 0.98, -1.2);
+    const craneo = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.32, 0.4), matPelo);
+    craneo.castShadow = true;
+    cabeca.add(craneo);
+    // Focinho comprido e afunilado: bloco esticado + ponta mais escura e estreita
+    const focinho = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.5), matPelo);
+    focinho.position.set(0, -0.05, -0.44);
+    focinho.castShadow = true;
+    cabeca.add(focinho);
+    const pontaFocinho = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.15, 0.14), matPeloEscuro);
+    pontaFocinho.position.set(0, -0.07, -0.68);
+    cabeca.add(pontaFocinho);
+    const nariz = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6), matNariz);
+    nariz.position.set(0, -0.06, -0.75);
+    cabeca.add(nariz);
+    // Orelhas triangulares, retas e eretas — mais características de lobo
+    [-0.14, 0.14].forEach(px => {
+        const orelha = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.3, 4), matPelo);
+        orelha.position.set(px, 0.29, 0.04);
+        orelha.rotation.y = Math.PI / 4;
+        orelha.castShadow = true;
+        cabeca.add(orelha);
+    });
+    const parOlhosLobo = criarParOlhos(0.11, 0.03, -0.22, 0.045, matOlho);
+    cabeca.add(parOlhosLobo.grupo);
+    grupo.add(cabeca);
+
+    grupo.add(criarSombraContato(0.55));
+
+    // Rabo: uma barra só (cilindro), pendurada pra baixo e levemente pra
+    // trás — sem cone na ponta.
+    const rabo = new THREE.Group();
+    rabo.position.set(0, 0.95, 0.95);
+    rabo.rotation.x = Math.PI * 0.70;
+    const raboBarra = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.85, 7), matPelo);
+    raboBarra.position.y = -0.42;
+    raboBarra.castShadow = true;
+    rabo.add(raboBarra);
+    grupo.add(rabo);
+
+    // Pernas finas e retas, com patas em bloco na ponta
+    const pernas = {};
+    const posPernas = { dianteiraEsq: [-0.19, 0.68, -0.62], dianteiraDir: [0.19, 0.68, -0.62], traseiraEsq: [-0.2, 0.68, 0.65], traseiraDir: [0.2, 0.68, 0.65] };
+    Object.keys(posPernas).forEach(nome => {
+        const [px, py, pz] = posPernas[nome];
+        const pivot = criarMembroAnimal(0.68, 0.06, 0.09, matPelo, matPeloEscuro);
+        pivot.position.set(px, py, pz);
+        grupo.add(pivot);
+        pernas[nome] = pivot;
+    });
+
+    grupo.userData.cabeca = cabeca;
+    grupo.userData.pernas = pernas;
+    grupo.userData.torso = torso;
+    grupo.userData.rabo = rabo;
+    grupo.userData.olhos = parOlhosLobo.olhos;
+    return grupo;
+}
+
+// --- 🐇 Coelho ---
+function criarModeloCoelho() {
+    const grupo = new THREE.Group();
+    const tomBase = 0.08 + Math.random() * 0.05;
+    const corPelo = new THREE.Color().setHSL(tomBase, 0.35, 0.5 + Math.random() * 0.18);
+    const matPelo = new THREE.MeshStandardMaterial({ color: corPelo, roughness: 0.85, flatShading: true });
+    const matPeloClaro = new THREE.MeshStandardMaterial({ color: 0xf5f0e8, roughness: 0.85, flatShading: true });
+    const matNariz = new THREE.MeshStandardMaterial({ color: 0xd97a8a, roughness: 0.6 });
+    const matOlho = new THREE.MeshStandardMaterial({ color: 0x1c1108, roughness: 0.3 });
+
+    // Corpo em duas partes (quadril arredondado + tronco em bloco na frente)
+    // em vez de uma única esfera — tira o aspecto "bolinha gorda" e dá silhueta
+    // de coelho de verdade, mais fina na frente e cheia atrás.
+    const quadril = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 8), matPelo);
+    quadril.scale.set(0.36, 0.34, 0.4);
+    quadril.position.set(0, 0.34, 0.16);
+    quadril.castShadow = true;
+    grupo.add(quadril);
+    const tronco = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.34, 0.46), matPelo);
+    tronco.position.set(0, 0.31, -0.2);
+    tronco.castShadow = true;
+    grupo.add(tronco);
+    const peitoClaro = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.22, 0.18), matPeloClaro);
+    peitoClaro.position.set(0, 0.23, -0.42);
+    grupo.add(peitoClaro);
+
+    const rabo = new THREE.Mesh(new THREE.SphereGeometry(0.09, 6, 6), matPeloClaro);
+    rabo.position.set(0, 0.36, 0.5);
+    grupo.add(rabo);
+
+    const cabeca = new THREE.Group();
+    cabeca.position.set(0, 0.52, -0.42);
+    const craneo = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 8), matPelo);
+    craneo.castShadow = true;
+    cabeca.add(craneo);
+    // Bochechas: quebram a cabeça-esfera única e deixam o rosto mais expressivo
+    [-0.15, 0.15].forEach(px => {
+        const bochecha = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 6), matPeloClaro);
+        bochecha.position.set(px, -0.05, -0.1);
+        cabeca.add(bochecha);
+    });
+    const focinho = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.13, 0.12), matPeloClaro);
+    focinho.position.set(0, -0.02, -0.24);
+    cabeca.add(focinho);
+    const nariz = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 6), matNariz);
+    nariz.position.set(0, 0.0, -0.31);
+    cabeca.add(nariz);
+    const parOlhosCoelho = criarParOlhos(0.12, 0.05, -0.14, 0.045, matOlho);
+    cabeca.add(parOlhosCoelho.grupo);
+
+    grupo.add(criarSombraContato(0.32));
+
+    const orelhas = [];
+    [-0.09, 0.09].forEach(px => {
+        const pivotOrelha = new THREE.Group();
+        pivotOrelha.position.set(px, 0.2, 0.02);
+        // Orelha em bloco achatado (não cilindro redondo) — silhueta mais
+        // limpa e "de jogo", com a parte interna rosada aparecendo por cima.
+        const orelha = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.42, 0.045), matPelo);
+        orelha.position.y = 0.21;
+        orelha.castShadow = true;
+        pivotOrelha.add(orelha);
+        const orelhaInterna = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.3, 0.01), matPeloClaro);
+        orelhaInterna.position.set(0, 0.2, -0.024);
+        pivotOrelha.add(orelhaInterna);
+        cabeca.add(pivotOrelha);
+        orelhas.push(pivotOrelha);
+    });
+    grupo.add(cabeca);
+
+    // Pernas traseiras bem maiores que as dianteiras (pro pulo característico
+    // do coelho), agora com patinhas em bloco na ponta
+    const pernas = {};
+    const traseiraEsq = criarMembroAnimal(0.38, 0.08, 0.12, matPelo, matPelo);
+    traseiraEsq.position.set(-0.15, 0.32, 0.3);
+    grupo.add(traseiraEsq); pernas.traseiraEsq = traseiraEsq;
+    const traseiraDir = criarMembroAnimal(0.38, 0.08, 0.12, matPelo, matPelo);
+    traseiraDir.position.set(0.15, 0.32, 0.3);
+    grupo.add(traseiraDir); pernas.traseiraDir = traseiraDir;
+    const dianteiraEsq = criarMembroAnimal(0.2, 0.045, 0.065, matPelo, matPelo);
+    dianteiraEsq.position.set(-0.11, 0.27, -0.32);
+    grupo.add(dianteiraEsq); pernas.dianteiraEsq = dianteiraEsq;
+    const dianteiraDir = criarMembroAnimal(0.2, 0.045, 0.065, matPelo, matPelo);
+    dianteiraDir.position.set(0.11, 0.27, -0.32);
+    grupo.add(dianteiraDir); pernas.dianteiraDir = dianteiraDir;
+
+    grupo.userData.cabeca = cabeca;
+    grupo.userData.orelhas = orelhas;
+    grupo.userData.pernas = pernas;
+    grupo.userData.torso = tronco;
+    grupo.userData.olhos = parOlhosCoelho.olhos;
+    return grupo;
+}
+
+// Gera, num <canvas> fora da tela, uma textura procedural de pelagem: base
+// sólida + centenas de manchinhas claras/escuras espalhadas (tipo ruído
+// orgânico), simulando variação real de pelo em vez de uma cor chapada.
+// É a única fauna do jogo que usa um bitmap de verdade como "map" do
+// material (as outras usam só cor sólida) — dá um acabamento bem mais rico
+// de perto, sem custar quase nada (é gerado 1x por cervo e reutilizado).
+function criarTexturaPeloCervo(corBase) {
+    const tam = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = tam; canvas.height = tam;
+    const ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = '#' + corBase.getHexString();
+    ctx.fillRect(0, 0, tam, tam);
+
+    // Manchas grandes e suaves (variação tonal em áreas, tipo "nuvens" de pelo)
+    for (let i = 0; i < 14; i++) {
+        const x = Math.random() * tam, y = Math.random() * tam, r = 14 + Math.random() * 22;
+        const claro = Math.random() < 0.5;
+        const cor = corBase.clone().multiplyScalar(claro ? 1.12 + Math.random() * 0.15 : 0.8 + Math.random() * 0.1);
+        const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+        grad.addColorStop(0, '#' + cor.getHexString());
+        grad.addColorStop(1, '#' + cor.getHexString() + '00');
+        ctx.globalAlpha = 0.35;
+        ctx.fillStyle = grad;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Pontinhos finos (grão do pelo) — mistura de claros e escuros
+    ctx.globalAlpha = 1;
+    for (let i = 0; i < 900; i++) {
+        const x = Math.random() * tam, y = Math.random() * tam;
+        const claro = Math.random() < 0.5;
+        const cor = corBase.clone().multiplyScalar(claro ? 1.25 + Math.random() * 0.3 : 0.62 + Math.random() * 0.15);
+        ctx.fillStyle = '#' + cor.getHexString();
+        ctx.globalAlpha = 0.18 + Math.random() * 0.22;
+        ctx.fillRect(x, y, 1.4, 1.4);
+    }
+
+    // Pintas claras espalhadas na garupa/lombo, como filhotes de cervo real
+    // (bem sutis num adulto — só uma "textura" a mais, não um padrão óbvio)
+    ctx.globalAlpha = 0.5;
+    const corPinta = corBase.clone().lerp(new THREE.Color(0xf3ead9), 0.65);
+    ctx.fillStyle = '#' + corPinta.getHexString();
+    for (let i = 0; i < 26; i++) {
+        const x = 20 + Math.random() * (tam - 40), y = 20 + Math.random() * (tam - 40);
+        ctx.beginPath(); ctx.arc(x, y, 1.6 + Math.random() * 1.4, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    const textura = new THREE.CanvasTexture(canvas);
+    textura.wrapS = THREE.RepeatWrapping; textura.wrapT = THREE.RepeatWrapping;
+    textura.repeat.set(2.5, 2.5);
+    textura.needsUpdate = true;
+    return textura;
+}
+
+// Segmento cilíndrico de chifre: pivô posicionado na base (ponto de encaixe),
+// com a peça deslocada pra cima da metade do seu próprio comprimento — o
+// mesmo truque de criarMembroAnimal, mas aplicado em cadeia aqui embaixo:
+// qualquer filho colocado em (0, comprimento, 0) cai exatamente em cima da
+// ponta deste segmento, então nada fica solto no ar.
+function criarSegmentoChifre(comprimento, raioTopo, raioBase, material) {
+    const pivot = new THREE.Group();
+    const seg = new THREE.Mesh(new THREE.CylinderGeometry(raioTopo, raioBase, comprimento, 5), material);
+    seg.position.y = comprimento / 2;
+    seg.castShadow = true;
+    pivot.add(seg);
+    return pivot;
+}
+
+// Mesma lógica do segmento acima, mas com uma ponta cônica (afina em direção
+// à extremidade) — usado nos galhos que brotam da haste principal.
+function criarPontaChifre(comprimento, raioBase, material) {
+    const pivot = new THREE.Group();
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(raioBase, comprimento, 5), material);
+    cone.position.y = comprimento / 2;
+    cone.castShadow = true;
+    pivot.add(cone);
+    return pivot;
+}
+
+// Constrói um lado da galhada (chifre) do cervo como uma cadeia de peças
+// hierárquicas — cada haste/ponta é FILHA da peça anterior e presa
+// exatamente na extremidade dela (não posicionada solta por coordenadas
+// absolutas) — bem mais elaborado que os outros apêndices da fauna
+// (orelhas/rabo), como pedido: é o "detalhe avançado" que dá presença ao
+// cervo à distância, e sem nenhum pedaço flutuando fora do lugar.
+// mirror = true espelha tudo pro lado esquerdo.
+function criarGalhada(matChifre, mirror) {
+    const grupo = new THREE.Group();
+    const s = mirror ? -1 : 1;
+
+    // Haste principal: sai da cabeça, angulando pra fora e pra cima
+    const haste1 = criarSegmentoChifre(0.32, 0.03, 0.04, matChifre);
+    haste1.position.set(s * 0.01, 0, 0);
+    haste1.rotation.z = -s * 0.48;
+    haste1.rotation.x = -0.15;
+    grupo.add(haste1);
+
+    // Segunda haste: encaixada exatamente na ponta da primeira (filha dela),
+    // curvando mais pra trás/cima — dá a curvatura típica da galhada
+    const haste2 = criarSegmentoChifre(0.28, 0.02, 0.028, matChifre);
+    haste2.position.set(0, 0.32, 0);
+    haste2.rotation.z = -s * 0.4;
+    haste2.rotation.x = -0.3;
+    haste1.add(haste2);
+
+    // Pontas (galhos): brotam de pontos ao longo da segunda haste, cada uma
+    // filha dela — como nascem sobre o próprio eixo da haste, encaixam
+    // certinho na superfície, sem folga nem sobreposição estranha.
+    const ponta1 = criarPontaChifre(0.15, 0.02, matChifre);
+    ponta1.position.set(0, 0.1, 0);
+    ponta1.rotation.z = -s * 0.9;
+    ponta1.rotation.x = -0.25;
+    haste2.add(ponta1);
+
+    const ponta2 = criarPontaChifre(0.16, 0.018, matChifre);
+    ponta2.position.set(0, 0.2, 0);
+    ponta2.rotation.z = -s * 0.75;
+    ponta2.rotation.x = -0.15;
+    haste2.add(ponta2);
+
+    // Ponta final: continua a partir da própria extremidade da segunda
+    // haste, como a "coroa" no topo da galhada
+    const pontaTopo = criarPontaChifre(0.18, 0.018, matChifre);
+    pontaTopo.position.set(0, 0.28, 0);
+    pontaTopo.rotation.z = -s * 0.3;
+    pontaTopo.rotation.x = -0.55;
+    haste2.add(pontaTopo);
+
+    return grupo;
+}
+
+// --- 🦌 Cervo ---
+// Corpo esguio e pernas longas e finas (bem diferentes do urso/lobo — silhueta
+// alta e delicada), pescoço comprido erguendo a cabeça, galhada ramificada nos
+// machos, "espelho" branco na garupa/rabo (como um cervo-do-pantanal/veado real)
+// e pelagem com textura procedural (manchas + grão), em vez de cor chapada.
+function criarModeloCervo() {
+    const grupo = new THREE.Group();
+    const tomBase = 0.06 + Math.random() * 0.03;
+    const corPelo = new THREE.Color().setHSL(tomBase, 0.42, 0.36 + Math.random() * 0.08);
+    const texturaPelo = criarTexturaPeloCervo(corPelo);
+
+    const matPelo = new THREE.MeshStandardMaterial({ map: texturaPelo, roughness: 0.85, flatShading: true });
+    const matPeloEscuro = new THREE.MeshStandardMaterial({ color: corPelo.clone().multiplyScalar(0.42), roughness: 0.9, flatShading: true });
+    const matPeloClaro = new THREE.MeshStandardMaterial({ color: 0xf3ead9, roughness: 0.85, flatShading: true });
+    const matCasco = new THREE.MeshStandardMaterial({ color: 0x1c1712, roughness: 0.5 });
+    const matNariz = new THREE.MeshStandardMaterial({ color: 0x161009, roughness: 0.55 });
+    const matOlho = new THREE.MeshStandardMaterial({ color: 0x150d06, roughness: 0.3 });
+    const matChifre = new THREE.MeshStandardMaterial({ color: 0xcbb694, roughness: 0.65 });
+
+    // Garupa (traseira, arredondada e um pouco mais alta/cheia — típica do cervo)
+    const garupa = new THREE.Mesh(new THREE.SphereGeometry(1, 9, 7), matPelo);
+    garupa.scale.set(0.36, 0.4, 0.5);
+    garupa.position.set(0, 1.32, 0.62);
+    garupa.castShadow = true;
+    grupo.add(garupa);
+    // "Espelho" claro na garupa (mancha branca característica sob o rabo)
+    const espelho = new THREE.Mesh(new THREE.SphereGeometry(0.16, 6, 6), matPeloClaro);
+    espelho.position.set(0, 1.2, 0.98);
+    grupo.add(espelho);
+
+    // Torso central, esguio e reto
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.46, 0.85), matPelo);
+    torso.position.set(0, 1.32, 0.05);
+    torso.castShadow = true;
+    grupo.add(torso);
+
+    // Peito/ombros — um pouco mais estreito, marca a base do pescoço
+    const peito = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.42, 0.4), matPelo);
+    peito.position.set(0, 1.28, -0.5);
+    peito.castShadow = true;
+    grupo.add(peito);
+
+    // Barriga clara — faixa fina embaixo do torso todo
+    const barriga = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.12, 1.1), matPeloClaro);
+    barriga.position.set(0, 1.1, 0.1);
+    grupo.add(barriga);
+
+    // Pescoço: comprido e anguloso, ligando o peito à cabeça erguida —
+    // é o que dá a postura alerta e elegante do cervo (nenhum outro bicho
+    // do jogo tem essa peça).
+    const pescoco = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.21, 0.65, 7), matPelo);
+    pescoco.position.set(0, 1.72, -0.915);
+    pescoco.rotation.x = -0.75;
+    pescoco.castShadow = true;
+    grupo.add(pescoco);
+    // Garganta clara, acompanhando o pescoço
+    const garganta = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.15, 0.46, 6), matPeloClaro);
+    garganta.position.set(0, 1.66, -0.84);
+    garganta.rotation.x = -0.75;
+    grupo.add(garganta);
+
+    // Cabeça (grupo próprio — gira sozinha na animação idle, no topo do pescoço)
+    const cabeca = new THREE.Group();
+    cabeca.position.set(0, 2.08, -1.28);
+    const craneo = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 0.3), matPelo);
+    craneo.castShadow = true;
+    cabeca.add(craneo);
+    // Focinho comprido e afunilado — silhueta de cervo, bem diferente do
+    // focinho curto/quadrado do urso/lobo
+    const focinho = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 0.36), matPelo);
+    focinho.position.set(0, -0.06, -0.32);
+    focinho.castShadow = true;
+    cabeca.add(focinho);
+    const pontaFocinho = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.1, 0.1), matPeloEscuro);
+    pontaFocinho.position.set(0, -0.08, -0.5);
+    cabeca.add(pontaFocinho);
+    const nariz = new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 6), matNariz);
+    nariz.position.set(0, -0.07, -0.56);
+    cabeca.add(nariz);
+
+    // Orelhas grandes, ovaladas e tombadas pros lados opostos (característica
+    // marcante do cervo — bem abertas, quase caídas, e sempre alerta ao redor)
+    const orelhas = [];
+    [-0.11, 0.11].forEach(px => {
+        const pivotOrelha = new THREE.Group();
+        pivotOrelha.position.set(px, 0.07, 0);
+        pivotOrelha.rotation.z = -Math.sign(px) * 1.05;
+        const orelha = new THREE.Mesh(new THREE.SphereGeometry(0.11, 7, 6), matPelo);
+        orelha.scale.set(0.55, 1, 0.35);
+        orelha.position.y = 0.13;
+        orelha.castShadow = true;
+        pivotOrelha.add(orelha);
+        const orelhaInterna = new THREE.Mesh(new THREE.SphereGeometry(0.075, 6, 5), matPeloEscuro);
+        orelhaInterna.scale.set(0.5, 1, 0.25);
+        orelhaInterna.position.set(0, 0.13, -0.035);
+        pivotOrelha.add(orelhaInterna);
+        cabeca.add(pivotOrelha);
+        orelhas.push(pivotOrelha);
+    });
+
+    // Galhada: um par de chifres ramificados no topo da cabeça — o grande
+    // "detalhe avançado" do cervo, dá presença mesmo de longe/silhueta
+    const galhadaDir = criarGalhada(matChifre, false);
+    galhadaDir.position.set(0.07, 0.1, 0.02);
+    cabeca.add(galhadaDir);
+    const galhadaEsq = criarGalhada(matChifre, true);
+    galhadaEsq.position.set(-0.07, 0.1, 0.02);
+    cabeca.add(galhadaEsq);
+
+    const parOlhosCervo = criarParOlhos(0.1, 0.02, -0.1, 0.04, matOlho);
+    cabeca.add(parOlhosCervo.grupo);
+    grupo.add(cabeca);
+
+    grupo.add(criarSombraContato(0.62));
+
+    // Rabo curto, erguido, branco por baixo (como o "alarme" visual do cervo
+    // fugindo — fica bem visível quando ele corre)
+    const rabo = new THREE.Group();
+    rabo.position.set(0, 1.45, 1.05);
+    rabo.rotation.x = -0.3;
+    const raboBase = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.22, 6), matPelo);
+    raboBase.position.y = -0.1;
+    raboBase.rotation.x = Math.PI;
+    raboBase.castShadow = true;
+    rabo.add(raboBase);
+    grupo.add(rabo);
+
+    // Pernas: 4, longas e bem finas — a marca registrada do cervo (bem mais
+    // esguias que as do lobo, e enormemente mais que as do urso), com casco
+    // escuro em bloco na ponta em vez da "pata" das outras espécies
+    const pernas = {};
+    const posPernas = { dianteiraEsq: [-0.15, 1.28, -0.55], dianteiraDir: [0.15, 1.28, -0.55], traseiraEsq: [-0.17, 1.32, 0.6], traseiraDir: [0.17, 1.32, 0.6] };
+    Object.keys(posPernas).forEach(nome => {
+        const [px, py, pz] = posPernas[nome];
+        const pivot = criarMembroAnimal(1.28, 0.045, 0.075, matPeloEscuro, matCasco);
+        pivot.position.set(px, py, pz);
+        grupo.add(pivot);
+        pernas[nome] = pivot;
+    });
+
+    grupo.userData.cabeca = cabeca;
+    grupo.userData.orelhas = orelhas;
+    grupo.userData.pernas = pernas;
+    grupo.userData.torso = torso;
+    grupo.userData.rabo = rabo;
+    grupo.userData.olhos = parOlhosCervo.olhos;
+    return grupo;
+}
+
+// Gira "atual" em direção a "alvo" (radianos) pelo caminho mais curto, sem
+// nunca passar de alvo — usado pra suavizar a virada dos animais.
+function girarSuaveAngulo(atual, alvo, velRad, delta) {
+    let diff = alvo - atual;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    const maxPasso = velRad * delta;
+    if (Math.abs(diff) <= maxPasso) return alvo;
+    return atual + Math.sign(diff) * maxPasso;
+}
+
+// Checa se um animal bateria em algo (árvore, rocha, casa) se se movesse pro
+// ponto (x, z). Ignora água (isso é checado à parte, via altura do terreno) e
+// ignora outros animais (senão a IA de vagueio simples trava tentando
+// desviar uns dos outros sem parar).
+function colideAnimal(x, z, raio, dadosAnimal) {
+    for (let i = 0; i < objetosMundo.length; i++) {
+        const obj = objetosMundo[i];
+        if (obj.dadosAnimalRef === dadosAnimal || obj.eAnimal) continue;
+
+        if (obj.isCasaConstruida) {
+            const dx = x - obj.x, dz = z - obj.z;
+            const raioAprox = Math.max(obj.w, obj.d) / 2 + raio;
+            if (dx * dx + dz * dz < raioAprox * raioAprox) return true;
+        } else if (obj.isBox) {
+            if (x > obj.minX - raio && x < obj.maxX + raio && z > obj.minZ - raio && z < obj.maxZ + raio) return true;
+        } else {
+            const dx = x - obj.x, dz = z - obj.z;
+            const raioTotal = (obj.raio || 0.6) + raio;
+            if (dx * dx + dz * dz < raioTotal * raioTotal) return true;
+        }
+    }
+    return false;
+}
+
+// Cria e registra um animal no mundo (modelo 3D + colisor + dados de IA/animação).
+function criarAnimal(tipo, x, z) {
+    let grupo, velocidadeBase, raioColisao;
+    if (tipo === 'urso') { grupo = criarModeloUrso(); velocidadeBase = 1.7; raioColisao = 1.25; }
+    else if (tipo === 'lobo') { grupo = criarModeloLobo(); velocidadeBase = 2.7; raioColisao = 0.7; }
+    else if (tipo === 'cervo') { grupo = criarModeloCervo(); velocidadeBase = 3.4; raioColisao = 0.85; }
+    else { grupo = criarModeloCoelho(); velocidadeBase = 3.0; raioColisao = 0.35; }
+
+    const escala = 0.9 + Math.random() * 0.25;
+    grupo.scale.setScalar(escala);
+
+    const h = obterAlturaTerreno(x, z);
+    grupo.position.set(x, h, z);
+    grupo.rotation.y = Math.random() * Math.PI * 2;
+    cena.add(grupo);
+
+    const colisor = { x: x, z: z, raio: raioColisao * escala, topoY: h + 2.2 * escala, eAnimal: true };
+    objetosMundo.push(colisor);
+
+    // Som de passos, preso ao próprio grupo 3D do bicho — o THREE.PositionalAudio
+    // cuida sozinho de baixar o volume conforme o jogador se afasta.
+    const somPasso = new THREE.PositionalAudio(ouvinteAudio);
+    somPasso.setLoop(true);
+    somPasso.setVolume(0.9);
+    somPasso.setRefDistance(4.5);
+    somPasso.setRolloffFactor(1.6);
+    somPasso.setDistanceModel('exponential');
+    grupo.add(somPasso);
+    if (bufferPassoAnimal) somPasso.setBuffer(bufferPassoAnimal);
+    else filaPositionalAnimais.push(somPasso);
+
+    const dadosAnimal = {
+        tipo, grupo, colisor, somPasso,
+        origemX: x, origemZ: z,
+        raioVagueio: tipo === 'coelho' ? 9 : (tipo === 'lobo' ? 18 : (tipo === 'cervo' ? 20 : 13)),
+        raioColisao: raioColisao * escala,
+        velocidadeMax: velocidadeBase * escala,
+        velocidadeAtual: 0,
+        direcaoY: grupo.rotation.y,
+        estado: 'parado',
+        tempoEstado: Math.random() * 4,
+        alvoX: x, alvoZ: z,
+        faseAndar: Math.random() * 10,
+        faseIdle: Math.random() * 10,
+        proxPiscar: 2 + Math.random() * 4,
+        piscando: 0,
+        faseAndarAnterior: 0
+    };
+    colisor.dadosAnimalRef = dadosAnimal;
+    animaisNoMundo.push(dadosAnimal);
+    return dadosAnimal;
+}
+
+// Tenta achar um ponto válido pra nascer um animal (longe do spawn do
+// jogador/cabana, fora d'água); desiste depois de algumas tentativas pra
+// nunca travar o carregamento do jogo.
+function tentarSpawnAnimal(tipo) {
+    for (let tentativas = 0; tentativas < 25; tentativas++) {
+        const x = (Math.random() - 0.5) * 320;
+        const z = (Math.random() - 0.5) * 320;
+        if (Math.abs(x) < 15 && Math.abs(z) < 15) continue;
+        if (Math.abs(x - cabanaX) < 12 && Math.abs(z - cabanaZ) < 12) continue;
+        if (obterAlturaTerreno(x, z) <= NIVEL_DA_AGUA + 0.5) continue;
+        criarAnimal(tipo, x, z);
+        return;
+    }
+}
+for (let i = 0; i < 5; i++) tentarSpawnAnimal('urso');
+for (let i = 0; i < 8; i++) tentarSpawnAnimal('lobo');
+for (let i = 0; i < 16; i++) tentarSpawnAnimal('coelho');
+for (let i = 0; i < 10; i++) tentarSpawnAnimal('cervo');
+
+// --- Poeira dos passos ---
+// Pool simples de discos que nascem no pé, sobem/expandem um pouco e somem.
+// Reaproveita as mesmas instâncias (poolPoeira) em vez de criar/descartar
+// geometria toda hora, pra não pesar com dezenas de animais andando.
+const poolPoeira = [];
+const POEIRA_MAX = 40;
+const matPoeira = new THREE.MeshBasicMaterial({ color: 0xcbb98a, transparent: true, opacity: 0, depthWrite: false });
+for (let i = 0; i < POEIRA_MAX; i++) {
+    const p = new THREE.Mesh(new THREE.CircleGeometry(0.14, 6), matPoeira.clone());
+    p.rotation.x = -Math.PI / 2;
+    p.visible = false;
+    p.userData.vida = 0;
+    cena.add(p);
+    poolPoeira.push(p);
+}
+function spawnPoeira(x, y, z, escala) {
+    const p = poolPoeira.find(p => p.userData.vida <= 0);
+    if (!p) return;
+    p.position.set(x + (Math.random() - 0.5) * 0.15, y + 0.02, z + (Math.random() - 0.5) * 0.15);
+    p.scale.setScalar(0.5 * escala);
+    p.userData.vida = 0.55;
+    p.userData.vidaTotal = 0.55;
+    p.userData.escalaBase = escala;
+    p.visible = true;
+}
+function atualizarPoeira(delta) {
+    poolPoeira.forEach(p => {
+        if (p.userData.vida <= 0) { if (p.visible) p.visible = false; return; }
+        p.userData.vida -= delta;
+        const t = 1 - p.userData.vida / p.userData.vidaTotal;
+        p.scale.setScalar((0.5 + t * 0.9) * (p.userData.escalaBase || 1));
+        p.material.opacity = 0.4 * (1 - t);
+        if (p.userData.vida <= 0) p.visible = false;
+    });
+}
+
+// Atualiza IA de vagueio + animação de todos os animais — chamada uma vez
+// por frame de dentro de animar(). Cada bicho alterna entre "parado" (com
+// uma animação idle de olhar em volta) e "andando" até um ponto aleatório
+// dentro do seu raio de vagueio (sempre a partir de onde ele nasceu, pra não
+// ficar migrando o mapa inteiro com o tempo).
+function atualizarAnimais(delta) {
+    animaisNoMundo.forEach(a => {
+        a.faseIdle += delta;
+        a.tempoEstado -= delta;
+
+        if (a.tempoEstado <= 0) {
+            if (a.estado === 'parado') {
+                const ang = Math.random() * Math.PI * 2;
+                const dist = 3 + Math.random() * (a.raioVagueio - 3);
+                a.alvoX = a.origemX + Math.cos(ang) * dist;
+                a.alvoZ = a.origemZ + Math.sin(ang) * dist;
+                a.estado = 'andando';
+                a.tempoEstado = 5 + Math.random() * 6;
+            } else {
+                a.estado = 'parado';
+                a.tempoEstado = 2 + Math.random() * 5;
+            }
+        }
+
+        let alturaChao = obterAlturaTerreno(a.grupo.position.x, a.grupo.position.z);
+
+        if (a.estado === 'andando') {
+            const dx = a.alvoX - a.grupo.position.x, dz = a.alvoZ - a.grupo.position.z;
+            const distAlvo = Math.sqrt(dx * dx + dz * dz);
+
+            if (distAlvo < 0.6) {
+                a.estado = 'parado';
+                a.tempoEstado = 2 + Math.random() * 5;
+            } else {
+                const anguloAlvo = Math.atan2(-dx, -dz);
+                a.direcaoY = girarSuaveAngulo(a.direcaoY, anguloAlvo, 3.0, delta);
+                a.velocidadeAtual = THREE.MathUtils.lerp(a.velocidadeAtual, a.velocidadeMax, 3 * delta);
+
+                const novoX = a.grupo.position.x - Math.sin(a.direcaoY) * a.velocidadeAtual * delta;
+                const novoZ = a.grupo.position.z - Math.cos(a.direcaoY) * a.velocidadeAtual * delta;
+                const alturaNova = obterAlturaTerreno(novoX, novoZ);
+
+                if (alturaNova > NIVEL_DA_AGUA + 0.4 && !colideAnimal(novoX, novoZ, a.raioColisao, a)) {
+                    a.grupo.position.x = novoX;
+                    a.grupo.position.z = novoZ;
+                    alturaChao = alturaNova;
+                } else {
+                    a.tempoEstado = 0; // bateu em água/obstáculo: escolhe outro alvo já no próximo frame
+                }
+            }
+        } else {
+            a.velocidadeAtual = THREE.MathUtils.lerp(a.velocidadeAtual, 0, 6 * delta);
+        }
+
+        a.grupo.rotation.y = a.direcaoY;
+        a.colisor.x = a.grupo.position.x;
+        a.colisor.z = a.grupo.position.z;
+
+        // --- Animação ---
+        const pernas = a.grupo.userData.pernas;
+        if (a.tipo === 'coelho') {
+            // Pulo: o corpo inteiro sobe e desce, pernas traseiras (maiores)
+            // flexionam mais que as dianteiras — imita o jeito de pular do coelho.
+            a.faseAndar += delta * (a.velocidadeAtual * 2.6 + 0.001);
+            const ciclo = a.estado === 'andando' ? (Math.sin(a.faseAndar) + 1) / 2 : 0;
+            const salto = Math.pow(ciclo, 0.6);
+            a.grupo.position.y = alturaChao + salto * 0.3 * a.grupo.scale.y;
+            // Dispara poeira no instante em que o coelho "aterrissa" (salto cruzando perto de 0, descendo)
+            if (a.estado === 'andando' && salto < 0.08 && a.faseAndarAnterior >= 0.08) {
+                spawnPoeira(a.grupo.position.x, alturaChao, a.grupo.position.z, a.grupo.scale.x * 0.6);
+            }
+            a.faseAndarAnterior = salto;
+            if (pernas) {
+                const flexTras = -salto * 1.0, flexDianteira = -salto * 0.5;
+                pernas.traseiraEsq.rotation.x = THREE.MathUtils.lerp(pernas.traseiraEsq.rotation.x, flexTras, 20 * delta);
+                pernas.traseiraDir.rotation.x = THREE.MathUtils.lerp(pernas.traseiraDir.rotation.x, flexTras, 20 * delta);
+                pernas.dianteiraEsq.rotation.x = THREE.MathUtils.lerp(pernas.dianteiraEsq.rotation.x, flexDianteira, 20 * delta);
+                pernas.dianteiraDir.rotation.x = THREE.MathUtils.lerp(pernas.dianteiraDir.rotation.x, flexDianteira, 20 * delta);
+            }
+            if (a.grupo.userData.orelhas) {
+                a.grupo.userData.orelhas.forEach((orelha, i) => {
+                    orelha.rotation.x = Math.sin(a.faseIdle * 3 + i * 2) * 0.1 - salto * 0.3;
+                });
+            }
+        } else {
+            // Urso/lobo: passo em "trote diagonal" (pata dianteira-esquerda
+            // junto com a traseira-direita, e vice-versa) — o jeito natural
+            // como a maioria dos quadrúpedes anda.
+            a.grupo.position.y = alturaChao;
+            a.faseAndar += delta * (a.velocidadeAtual * 2.2 + 0.001);
+            if (pernas) {
+                if (a.estado === 'andando') {
+                    const balanco = Math.sin(a.faseAndar) * 0.5;
+                    pernas.dianteiraEsq.rotation.x = balanco;
+                    pernas.traseiraDir.rotation.x = balanco;
+                    pernas.dianteiraDir.rotation.x = -balanco;
+                    pernas.traseiraEsq.rotation.x = -balanco;
+                    // Cada vez que uma dupla diagonal de patas toca o chão (balanco cruza 0), solta poeira
+                    if (Math.sign(balanco) !== Math.sign(a.faseAndarAnterior) && Math.abs(balanco) < 0.5) {
+                        const ladoX = Math.cos(a.direcaoY) * 0.3, ladoZ = Math.sin(a.direcaoY) * 0.3;
+                        spawnPoeira(a.grupo.position.x + ladoX, alturaChao, a.grupo.position.z + ladoZ, a.grupo.scale.x * (a.tipo === 'urso' ? 1.3 : (a.tipo === 'cervo' ? 0.65 : 0.8)));
+                    }
+                    a.faseAndarAnterior = balanco;
+                } else {
+                    Object.values(pernas).forEach(p => { p.rotation.x = THREE.MathUtils.lerp(p.rotation.x, 0, 6 * delta); });
+                }
+            }
+            // Orelhas sempre em leve alerta, girando devagar pra "escutar" ao
+            // redor — só o cervo tem esse tique (reforça o ar arisco do bicho)
+            if (a.tipo === 'cervo' && a.grupo.userData.orelhas) {
+                a.grupo.userData.orelhas.forEach((orelha, i) => {
+                    orelha.rotation.x = Math.sin(a.faseIdle * 1.6 + i * 2.4) * 0.22;
+                });
+            }
+        }
+
+        // Cabeça "olhando ao redor" sozinha — mais perceptível parado, sutil andando
+        if (a.grupo.userData.cabeca) {
+            const amplitude = a.estado === 'parado' ? 0.4 : 0.1;
+            a.grupo.userData.cabeca.rotation.y = Math.sin(a.faseIdle * 0.6 + a.origemX) * amplitude;
+        }
+
+        // Respiração: leve pulso de escala no torso, mais visível parado que andando
+        if (a.grupo.userData.torso) {
+            const ampRespira = a.estado === 'parado' ? 0.02 : 0.008;
+            a.grupo.userData.torso.scale.y = 1 + Math.sin(a.faseIdle * 2.2) * ampRespira;
+        }
+
+        // Piscar: escala os olhos quase a zero no eixo Y por uma fração de segundo,
+        // em intervalos aleatórios — detalhe pequeno mas dá muita vida ao parado.
+        if (a.grupo.userData.olhos) {
+            if (a.piscando > 0) {
+                a.piscando -= delta;
+                const fecho = a.piscando > 0 ? Math.max(0.05, Math.abs(Math.sin((a.piscando / 0.12) * Math.PI))) : 1;
+                a.grupo.userData.olhos.forEach(o => o.scale.y = fecho);
+                if (a.piscando <= 0) a.grupo.userData.olhos.forEach(o => o.scale.y = 1);
+            } else {
+                a.proxPiscar -= delta;
+                if (a.proxPiscar <= 0) {
+                    a.piscando = 0.12;
+                    a.proxPiscar = 2.5 + Math.random() * 4.5;
+                }
+            }
+        }
+
+        // Rabo balançando — mais rápido andando, suave e lento parado
+        if (a.grupo.userData.rabo) {
+            const velBalanco = a.estado === 'andando' ? 6 : 1.4;
+            const ampBalanco = a.estado === 'andando' ? 0.22 : 0.1;
+            a.grupo.userData.rabo.rotation.z = Math.sin(a.faseIdle * velBalanco) * ampBalanco;
+        }
+
+        // Som de passos: só toca enquanto o bicho está de fato andando E o
+        // jogador está relativamente perto — evita tocar dezenas de sons ao
+        // mesmo tempo pro mapa inteiro (o PositionalAudio já reduz o volume
+        // sozinho com a distância, mas aqui a gente nem liga o som se não
+        // precisar).
+        if (a.somPasso && a.somPasso.buffer) {
+            const posJogador = obterAncoraCamera();
+            const dxJogador = posJogador.x - a.grupo.position.x, dzJogador = posJogador.z - a.grupo.position.z;
+            const pertoDoJogador = (dxJogador * dxJogador + dzJogador * dzJogador) < 400; // ~20 metros
+            const andandoDeVerdade = a.estado === 'andando' && a.velocidadeAtual > 0.15;
+            if (andandoDeVerdade && pertoDoJogador) {
+                if (!a.somPasso.isPlaying) a.somPasso.play();
+            } else if (a.somPasso.isPlaying) {
+                a.somPasso.stop();
+            }
+        }
+    });
+    atualizarPoeira(delta);
+}
 
 if (!ehTouch) {
     controles.getObject().position.set(0, obterAlturaTerreno(0, 0) + ALTURA_JOGADOR, 15);
@@ -2627,9 +3608,41 @@ function executarConstrucaoReal() {
         }
     }
 
+    criarConstrucaoNoMundo(tipoCasaParaConstruir, posAlvo.x, posAlvo.y, posAlvo.z, anguloRotacaoHolograma);
+
+    // Remove 1 planta do inventário
+    inventario['planta_' + tipoCasaParaConstruir]--;
+
+    if (inventario['planta_' + tipoCasaParaConstruir] <= 0) {
+        inventario['planta_' + tipoCasaParaConstruir] = 0;
+        itemAtivo = 'machado';
+    }
+
+    atualizarUIAktiv();
+
+    // Auto-save silencioso: qualquer construção nova já fica salva sozinha,
+    // sem precisar que o jogador lembre de abrir o menu e clicar em salvar.
+    if (typeof salvarJogo === 'function') salvarJogo(false);
+}
+
+// Constrói de fato os meshes/colisores de uma construção no mundo, numa
+// posição e ângulo dados, e devolve o registro criado (guardando x/y/z/rotY
+// nele). Extraída de executarConstrucaoReal pra poder ser chamada de dois
+// lugares: quando o jogador constrói de verdade (gastando planta do
+// inventário) e quando um jogo salvo é carregado (recriando tudo que já
+// existia, sem mexer no inventário).
+// OBS: os parâmetros têm os mesmos nomes das variáveis globais que o bloco
+// de ifs abaixo usa (tipoCasaParaConstruir, anguloRotacaoHolograma) de
+// propósito — isso "sombreia" as globais dentro desta função, então todo o
+// código interno (copiado de quando ele vivia direto em
+// executarConstrucaoReal) funciona sem precisar reescrever cada referência.
+function criarConstrucaoNoMundo(tipoCasaParaConstruir, x, y, z, anguloRotacaoHolograma) {
+    const posAlvo = { x, y, z };
+
     // Marca o "tamanho" de cada lista auxiliar ANTES de criar a construção, pra
     // depois conseguir descobrir exatamente o que foi adicionado por ela (e
-    // então remover tudo de uma vez se o jogador demolir essa construção).
+    // então remover tudo de uma vez se o jogador demolir essa construção, ou
+    // se um jogo salvo for recarregado).
     const snapshot = {
         raycast: objetosRaycast.length,
         mundo: objetosMundo.length,
@@ -2737,26 +3750,22 @@ function executarConstrucaoReal() {
         mundoObjs: objetosMundo.slice(snapshot.mundo),
         escadasObjs: listaEscadas.slice(snapshot.escadas),
         fogueirasObjs: listaFogueirasDinamicas.slice(snapshot.fogueiras),
-        portasObjs: todasAsPortas.slice(snapshot.portas)
+        portasObjs: todasAsPortas.slice(snapshot.portas),
+        // Guarda também a posição/ângulo originais — é o que permite salvar o
+        // jogo (ver salvarJogo/carregarJogo) e recriar tudo depois sem
+        // precisar "adivinhar" onde cada coisa estava.
+        x: posAlvo.x, y: posAlvo.y, z: posAlvo.z, rotY: anguloRotacaoHolograma
     };
     registro.raycastObjs.forEach(obj => { if (obj && obj.userData) obj.userData.construcaoInfo = registro; });
     construcoesColocadas.push(registro);
-
-    // Remove 1 planta do inventário
-    inventario['planta_' + tipoCasaParaConstruir]--;
-
-    if (inventario['planta_' + tipoCasaParaConstruir] <= 0) {
-        inventario['planta_' + tipoCasaParaConstruir] = 0;
-        itemAtivo = 'machado';
-    }
-
-    atualizarUIAktiv();
+    return registro;
 }
 
-// Demole uma construção (registrada em executarConstrucaoReal): tira tudo o
-// que ela criou do mundo/listas auxiliares e devolve 1 planta pro inventário
-// — o inverso exato do que foi gasto para colocá-la.
-function demolirConstrucao(registro) {
+// Remove uma construção do mundo (meshes, colisores, listas auxiliares) sem
+// devolver material ao inventário nem mostrar notificação — a parte "física"
+// que tanto demolirConstrucao (jogador demolindo de verdade) quanto
+// carregarJogo (limpando o mundo antes de recriar um save) precisam.
+function removerConstrucaoDoMundo(registro) {
     registro.raycastObjs.forEach(obj => {
         if (!obj) return;
         cena.remove(obj);
@@ -2767,7 +3776,7 @@ function demolirConstrucao(registro) {
         // cena, mas a geometria e o material continuam ocupando memória da
         // GPU até serem descartados manualmente. Cada construção cria seus
         // próprios materiais (não são compartilhados entre construções),
-        // então é seguro liberar aqui sempre que o jogador demole algo.
+        // então é seguro liberar aqui sempre que uma construção é removida.
         obj.traverse(filho => {
             if (filho.isMesh) {
                 if (filho.geometry) filho.geometry.dispose();
@@ -2815,6 +3824,13 @@ function demolirConstrucao(registro) {
 
     const iRegistro = construcoesColocadas.indexOf(registro);
     if (iRegistro > -1) construcoesColocadas.splice(iRegistro, 1);
+}
+
+// Demole uma construção (registrada em executarConstrucaoReal): tira tudo o
+// que ela criou do mundo/listas auxiliares e devolve 1 planta pro inventário
+// — o inverso exato do que foi gasto para colocá-la.
+function demolirConstrucao(registro) {
+    removerConstrucaoDoMundo(registro);
 
     inventario['planta_' + registro.tipo] = (inventario['planta_' + registro.tipo] || 0) + 1;
     atualizarUIAktiv();
@@ -2829,7 +3845,159 @@ function demolirConstrucao(registro) {
     } else {
         mostrarNotificacao('Construção demolida! Item devolvido ao inventário.', '#22c55e');
     }
+
+    // Auto-save silencioso, mesma lógica de quando se constrói algo.
+    if (typeof salvarJogo === 'function') salvarJogo(false);
 }
+
+// ============================================================
+// 💾 SALVAR / CARREGAR JOGO (localStorage)
+// ============================================================
+// Guarda tudo num único JSON dentro do localStorage do navegador: posição e
+// direção do olhar do jogador, dinheiro, inventário, hotbar, item ativo, se
+// a lanterna estava ligada, e a lista de construções colocadas (cada uma só
+// com tipo/posição/ângulo — os meshes de verdade são recriados do zero ao
+// carregar, via criarConstrucaoNoMundo). Não tenta salvar árvores/pedras já
+// cortadas, animais ou carros dirigíveis — o save cobre o progresso que
+// importa (o que você construiu e o que tem no inventário).
+const CHAVE_JOGO_SALVO = 'craftprint_save_v1';
+
+// Verdadeiro se existe algum jogo salvo no navegador (usado pra decidir se
+// mostra o botão "Continuar Jogo Salvo" na tela inicial).
+function existeJogoSalvo() {
+    try { return !!localStorage.getItem(CHAVE_JOGO_SALVO); } catch (erro) { return false; }
+}
+
+// Monta o objeto simples (só dados, sem referências a meshes) que vai pro
+// localStorage.
+function coletarEstadoParaSalvar() {
+    const posJ = obterAncoraCamera();
+    return {
+        versao: 1,
+        salvoEm: Date.now(),
+        jogador: {
+            x: posJ.x, y: posJ.y, z: posJ.z,
+            rotY: camera.rotation.y,
+            rotX: camera.rotation.x
+        },
+        dinheiro: dinheiroJogador,
+        inventario: { ...inventario },
+        hotbar: hotbar.slice(),
+        itemAtivo: itemAtivo,
+        lanternaLigada: lanternaLigada,
+        // Só os tipos que guardam posição própria (todas, desde o refactor de
+        // criarConstrucaoNoMundo) — filtro aqui é só uma proteção extra.
+        construcoes: construcoesColocadas
+            .filter(r => typeof r.x === 'number')
+            .map(r => ({ tipo: r.tipo, x: r.x, y: r.y, z: r.z, rotY: r.rotY || 0 }))
+    };
+}
+
+// Chamada pelo botão "💾 Salvar Jogo" do menu de pausa, e também pelo
+// sistema de auto-save (silencioso = true) em vários momentos do jogo — ver
+// mais abaixo os pontos onde salvarJogo(true/false) é chamada automaticamente.
+function salvarJogo(mostrarNotif = true) {
+    try {
+        const estado = coletarEstadoParaSalvar();
+        localStorage.setItem(CHAVE_JOGO_SALVO, JSON.stringify(estado));
+        if (mostrarNotif) mostrarNotificacao('💾 Jogo salvo com sucesso!', '#22c55e');
+    } catch (erro) {
+        console.error('Erro ao salvar o jogo:', erro);
+        if (mostrarNotif) mostrarNotificacao('Não foi possível salvar o jogo (armazenamento cheio ou bloqueado).', '#ef4444');
+    }
+}
+
+// Lê o localStorage e reconstrói o estado salvo no mundo já carregado.
+// mostrarAviso=false é usado no arranque automático (silencioso) se um dia
+// quisermos carregar sem notificação; por padrão sempre avisa o jogador.
+function carregarJogo(mostrarAviso = true) {
+    let estado;
+    try {
+        const bruto = localStorage.getItem(CHAVE_JOGO_SALVO);
+        if (!bruto) {
+            if (mostrarAviso) mostrarNotificacao('Nenhum jogo salvo encontrado.', '#f59e0b');
+            return false;
+        }
+        estado = JSON.parse(bruto);
+    } catch (erro) {
+        console.error('Erro ao ler o jogo salvo:', erro);
+        if (mostrarAviso) mostrarNotificacao('O jogo salvo está corrompido.', '#ef4444');
+        return false;
+    }
+
+    // Tira do mundo tudo que o jogador já tinha construído nesta sessão
+    // (sem devolver material — o inventário salvo vai substituir o atual
+    // daqui a pouco de qualquer forma) antes de recriar exatamente o que
+    // estava salvo.
+    construcoesColocadas.slice().forEach(registro => removerConstrucaoDoMundo(registro));
+
+    // Recria cada construção salva na posição/ângulo originais
+    (estado.construcoes || []).forEach(c => {
+        try { criarConstrucaoNoMundo(c.tipo, c.x, c.y, c.z, c.rotY || 0); }
+        catch (erro) { console.warn('Falha ao recriar construção salva:', c, erro); }
+    });
+
+    // Restaura inventário (mantém qualquer chave nova que não exista no save
+    // antigo), dinheiro, hotbar e item ativo
+    if (estado.inventario) inventario = { ...inventario, ...estado.inventario };
+    if (typeof estado.dinheiro === 'number') dinheiroJogador = estado.dinheiro;
+    if (Array.isArray(estado.hotbar)) {
+        hotbar = estado.hotbar.slice(0, LIMITE_HOTBAR);
+        while (hotbar.length < LIMITE_HOTBAR) hotbar.push(null);
+    }
+    if (estado.itemAtivo) itemAtivo = estado.itemAtivo;
+
+    // Restaura posição e direção do olhar do jogador
+    if (estado.jogador) {
+        obterAncoraCamera().set(estado.jogador.x, estado.jogador.y, estado.jogador.z);
+        camera.rotation.y = estado.jogador.rotY || 0;
+        camera.rotation.x = estado.jogador.rotX || 0;
+        cameraYawAlvo = camera.rotation.y;
+        cameraPitchAlvo = camera.rotation.x;
+    }
+
+    // Lanterna
+    if (typeof estado.lanternaLigada === 'boolean' && estado.lanternaLigada !== lanternaLigada) {
+        lanternaLigada = estado.lanternaLigada;
+        if (typeof luzLanterna !== 'undefined') luzLanterna.visible = lanternaLigada;
+    }
+
+    atualizarUIAktiv();
+    if (typeof atualizarDinheiroUI === 'function') atualizarDinheiroUI();
+    if (typeof sincronizarQuantidadesMochila === 'function') sincronizarQuantidadesMochila();
+
+    if (mostrarAviso) mostrarNotificacao('📂 Jogo carregado!', '#22c55e');
+    return true;
+}
+
+// Auto-save periódico: a cada 60s, se o jogo já começou, salva sozinho e
+// silenciosamente (sem popup) — assim o jogador nunca perde muito progresso
+// mesmo que esqueça de pausar ou feche o jogo sem querer.
+const INTERVALO_AUTO_SAVE_MS = 60000;
+setInterval(() => {
+    if (typeof jogoIniciado !== 'undefined' && jogoIniciado && typeof salvarJogo === 'function') {
+        salvarJogo(false);
+    }
+}, INTERVALO_AUTO_SAVE_MS);
+
+// Salva também sempre que a aba/app perde o foco (troca de aba, minimiza,
+// bloqueia o celular) — mais confiável que "beforeunload" em navegadores
+// mobile, onde fechar o app às vezes não dispara esse evento.
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden && typeof jogoIniciado !== 'undefined' && jogoIniciado && typeof salvarJogo === 'function') {
+        salvarJogo(false);
+    }
+});
+
+// Última tentativa de salvar ao fechar/recarregar a página (best-effort —
+// nem todo navegador garante que código assíncrono rode aqui, mas
+// localStorage.setItem é síncrono, então costuma funcionar).
+window.addEventListener('beforeunload', () => {
+    if (typeof jogoIniciado !== 'undefined' && jogoIniciado && typeof salvarJogo === 'function') {
+        salvarJogo(false);
+    }
+});
+
 const relogio = new THREE.Clock(); let tempoCiclo = 0.5;
 
 // PERFORMANCE: contadores usados para não repetir, todo frame, duas operações
@@ -3132,6 +4300,8 @@ function animar() {
         }
         fogueira.sistemaParticulas.geometry.attributes.position.needsUpdate = true;
     });
+
+    atualizarAnimais(delta);
 
   // --- COMECE A SUBSTITUIR A PARTIR DAQUI ---
   if (dirigindoCarro && carroAtual) {
